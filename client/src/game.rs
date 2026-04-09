@@ -1578,6 +1578,7 @@ impl GameClient for Mk48Game {
                     pay: context.keyboard.is_down(Key::C).then_some(Pay),
                     fire: if left_click
                         || self.ui_state.touch_fire
+                        || self.ui_state.touch_torpedo
                         || context
                             .keyboard
                             .state(Key::Space)
@@ -1604,8 +1605,9 @@ impl GameClient for Mk48Game {
                     hint,
                 };
 
-                // Consume touch fire so it doesn't repeat every frame.
+                // Consume touch fire/torpedo so they don't repeat every frame.
                 self.ui_state.touch_fire = false;
+                self.ui_state.touch_torpedo = false;
 
                 // Some things are not idempotent.
                 fn is_significant(control: &Control) -> bool {
@@ -1682,6 +1684,9 @@ impl GameClient for Mk48Game {
             }
             UiEvent::TouchFire => {
                 self.ui_state.touch_fire = true;
+            }
+            UiEvent::TouchTorpedo => {
+                self.ui_state.touch_torpedo = true;
             }
         }
     }

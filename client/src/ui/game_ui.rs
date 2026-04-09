@@ -174,6 +174,8 @@ pub struct UiState {
     pub touch_throttle: f32,
     /// Touch fire request (consumed each tick)
     pub touch_fire: bool,
+    /// Touch torpedo request (consumed each tick)
+    pub touch_torpedo: bool,
 }
 
 impl Default for UiState {
@@ -185,6 +187,7 @@ impl Default for UiState {
             touch_rudder: 0.0,
             touch_throttle: 0.0,
             touch_fire: false,
+            touch_torpedo: false,
         }
     }
 }
@@ -205,8 +208,10 @@ pub enum UiEvent {
     TouchRudder(f32),
     /// Touch throttle (0.0 to 1.0)
     TouchThrottle(f32),
-    /// Touch fire button pressed
+    /// Touch fire button pressed (main guns)
     TouchFire,
+    /// Touch torpedo button pressed
+    TouchTorpedo,
 }
 
 #[derive(PartialEq, Clone, Default)]

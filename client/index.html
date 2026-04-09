@@ -15,7 +15,19 @@
             font-display: swap;
         }
     </style>
-    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+    <script>
+        // Prevent pinch-zoom and double-tap zoom on iPad Safari
+        document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
+        document.addEventListener('gesturechange', function(e) { e.preventDefault(); });
+        document.addEventListener('gestureend', function(e) { e.preventDefault(); });
+        var lastTouchEnd = 0;
+        document.addEventListener('touchend', function(e) {
+            var now = Date.now();
+            if (now - lastTouchEnd <= 300) { e.preventDefault(); }
+            lastTouchEnd = now;
+        }, { passive: false });
+    </script>
     <title>WARSHIPS</title>
     <meta name="description" content="WARSHIPS — Naval combat game. Command warships, fire torpedoes, and sink the enemy fleet.">
     <meta name="keywords" content="game, warship, naval, combat, battleship">

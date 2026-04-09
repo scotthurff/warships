@@ -58,10 +58,41 @@ pub fn touch_controls() -> Html {
         Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchThrottle(1.0)); })
     };
 
-    // ── Fire button ──
+    // ── Fire buttons ──
     let on_fire = {
         let cb = ui_event_callback.clone();
         Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchFire); })
+    };
+    let on_torpedo = {
+        let cb = ui_event_callback.clone();
+        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchTorpedo); })
+    };
+
+    // Track active speed for highlighting
+    let active_speed = use_state(|| 0u8); // 0=stop, 1=half, 2=full
+    let on_speed_stop = {
+        let cb = ui_event_callback.clone();
+        let active = active_speed.clone();
+        Callback::from(move |_: MouseEvent| { active.set(0); cb.emit(UiEvent::TouchThrottle(0.0)); })
+    };
+    let on_speed_half = {
+        let cb = ui_event_callback.clone();
+        let active = active_speed.clone();
+        Callback::from(move |_: MouseEvent| { active.set(1); cb.emit(UiEvent::TouchThrottle(0.5)); })
+    };
+    let on_speed_full = {
+        let cb = ui_event_callback.clone();
+        let active = active_speed.clone();
+        Callback::from(move |_: MouseEvent| { active.set(2); cb.emit(UiEvent::TouchThrottle(1.0)); })
+    };
+
+    let speed_val = *active_speed;
+    let speed_bg = |idx: u8, base_color: &str| -> String {
+        if speed_val == idx {
+            format!("{btn_base} width: 56px; height: 44px; background: {base_color}; border: 2px solid white;")
+        } else {
+            format!("{btn_base} width: 56px; height: 44px; background: {base_color};")
+        }
     };
 
     html! {
@@ -72,15 +103,15 @@ pub fn touch_controls() -> Html {
                     // Speed buttons
                     <div style="display: flex; gap: 0.4rem;">
                         <button
-                            style={format!("{btn_base} width: 56px; height: 44px; background: rgba(200,50,50,0.4);")}
+                            style={speed_bg(0, "rgba(200,50,50,0.4)")}
                             onclick={on_speed_stop}
                         >{"STOP"}</button>
                         <button
-                            style={format!("{btn_base} width: 56px; height: 44px; background: rgba(50,100,200,0.4);")}
+                            style={speed_bg(1, "rgba(50,100,200,0.4)")}
                             onclick={on_speed_half}
                         >{"1/2"}</button>
                         <button
-                            style={format!("{btn_base} width: 56px; height: 44px; background: rgba(50,180,80,0.4);")}
+                            style={speed_bg(2, "rgba(50,180,80,0.4)")}
                             onclick={on_speed_full}
                         >{"FULL"}</button>
                     </div>
@@ -102,12 +133,18 @@ pub fn touch_controls() -> Html {
                 </div>
             </Positioner>
 
-            // Fire button — bottom right
+            // Fire buttons — bottom right (torpedo above main guns, WoWS style)
             <Positioner id="touch_fire" position={Position::BottomRight{margin: "1rem"}}>
-                <button
-                    style={format!("{btn_base} width: 80px; height: 80px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #ff4444, #aa1111); border: 3px solid rgba(255,100,80,0.6); box-shadow: 0 0 20px rgba(255,60,40,0.3); font-size: 1rem;")}
-                    onclick={on_fire}
-                >{"FIRE"}</button>
+                <div style="display: flex; flex-direction: column; gap: 0.6rem; align-items: center;">
+                    <button
+                        style={format!("{btn_base} width: 64px; height: 64px; border-radius: 50%; background: rgba(40,120,180,0.6); border: 2px solid rgba(80,160,220,0.5); font-size: 0.7rem;")}
+                        onclick={on_torpedo}
+                    >{"TORP"}</button>
+                    <button
+                        style={format!("{btn_base} width: 80px; height: 80px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #ff4444, #aa1111); border: 3px solid rgba(255,100,80,0.6); box-shadow: 0 0 20px rgba(255,60,40,0.3); font-size: 1rem;")}
+                        onclick={on_fire}
+                    >{"FIRE"}</button>
+                </div>
             </Positioner>
         </>
     }
