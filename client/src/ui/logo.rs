@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Softbear, Inc.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use stylist::yew::styled_component;
 use yew::{html, Html};
 
 pub fn logo() -> Html {
@@ -12,23 +11,23 @@ pub fn logo() -> Html {
             padding: 1rem 0;
         ">
             <h1 style="
-                font-family: 'Black Ops One', monospace, sans-serif;
-                font-size: 72px;
+                font-family: 'Black Ops One', 'Menlo', monospace;
+                font-size: 104px;
                 font-weight: 400;
-                color: #c8dce8;
-                text-shadow: 0 0 40px rgba(100,160,220,0.4), 0 2px 8px rgba(0,0,0,0.6);
-                letter-spacing: 8px;
+                color: #4ADE80;
+                letter-spacing: 4px;
+                text-transform: uppercase;
+                text-shadow: 0 0 24px rgba(74,222,128,0.3), 0 2px 0 rgba(0,0,0,0.5);
                 margin: 0;
-                text-transform: uppercase;
             ">{"WARSHIPS"}</h1>
-            <div style="
+            <p style="
                 font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
-                color: rgba(180,200,220,0.6);
                 font-size: 14px;
-                letter-spacing: 6px;
+                color: #94A3B8;
+                letter-spacing: 2px;
                 text-transform: uppercase;
-                margin-top: 4px;
-            ">{"NAVAL COMBAT"}</div>
+                margin-top: 8px;
+            ">{"NAVAL COMBAT"}</p>
         </div>
     }
 }

@@ -79,46 +79,48 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             } else {
                 if let UiStatus::Spawning = status {
                     <Positioner id="spawn" position={Position::Center}>
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 1.5rem; min-width: 50%;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 28px; min-width: 50%;">
                             {logo()}
-                            // Difficulty selector
-                            <div style="display: flex; gap: 0.5rem; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;">
+                            // Difficulty selector — wargame style
+                            <div style="display: flex; gap: 10px;">
                                 <button
-                                    style="background: rgba(50,180,80,0.5); border: 2px solid rgba(80,220,100,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(34,197,94,0.4); border-left: 3px solid #22C55E; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
                                     onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Captain); })}
                                 >{"Captain"}</button>
                                 <button
-                                    style="background: rgba(50,100,200,0.5); border: 2px solid rgba(80,140,240,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #FCD34D; border: 1px solid rgba(234,179,8,0.3); border-left: 3px solid #EAB308; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
                                     onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Admiral); })}
                                 >{"Admiral"}</button>
                                 <button
-                                    style="background: rgba(200,50,50,0.5); border: 2px solid rgba(240,80,80,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #F87171; border: 1px solid rgba(239,68,68,0.3); border-left: 3px solid #EF4444; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
                                     onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::FleetCommander); })}
                                 >{"Fleet Cmdr"}</button>
                             </div>
+                            // Play button — wargame primary CTA style
                             <button
                                 id="play_button"
                                 style="
-                                    background-color: #549f57;
-                                    border-radius: 1rem;
-                                    border: 1px solid #61b365;
-                                    color: white;
-                                    cursor: pointer;
-                                    font-size: 3.25rem;
+                                    display: flex; align-items: center; justify-content: center;
+                                    min-width: 200px; height: 56px; padding: 0 40px;
+                                    background: rgba(15,23,42,0.92);
+                                    color: #4ADE80;
+                                    border: 1px solid rgba(34,197,94,0.4);
+                                    border-left: 3px solid #22C55E;
+                                    border-radius: 2px;
                                     font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
-                                    padding: 0.7rem 2rem;
-                                    white-space: nowrap;
-                                    min-width: 12rem;
-                                    width: 100%;
+                                    font-size: 18px; font-weight: 700;
+                                    letter-spacing: 3px; text-transform: uppercase;
+                                    cursor: pointer;
+                                    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
                                 "
                                 onclick={on_play.reform(|_: MouseEvent| PlayerAlias::default())}
-                            >{"Play"}</button>
+                            >{"Start Game"}</button>
                         </div>
                     </Positioner>
                 }
-                <div style="position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 2rem;">
-                    <a href="/help/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 0.9rem;">{"Help"}</a>
-                    <a href="/ships/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 0.9rem;">{"Ships"}</a>
+                <div style="position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 16px;">
+                    <a href="/help/" style="color: #94A3B8; text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Help"}</a>
+                    <a href="/ships/" style="color: #94A3B8; text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Ships"}</a>
                 </div>
             }
         </>
