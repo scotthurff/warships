@@ -1456,6 +1456,16 @@ impl GameClient for Mk48Game {
                     self.first_control = false; // First control was joystick.
                 }
 
+                // Touch controls: rudder + throttle from UI buttons
+                if self.ui_state.touch_rudder.abs() > 0.01 || self.ui_state.touch_throttle > 0.01 {
+                    guidance = Some(Guidance {
+                        direction_target: player_contact.transform().direction
+                            + Angle::from_radians(0.3 * self.ui_state.touch_rudder),
+                        velocity_target: Velocity::from_mps(max_speed * self.ui_state.touch_throttle),
+                    });
+                    self.first_control = false;
+                }
+
                 if Self::is_holding_control(&context.mouse, context.client.time_seconds) {
                     let current_dir = player_contact.transform().direction;
                     let mut direction_target = Angle::from(
@@ -1567,6 +1577,7 @@ impl GameClient for Mk48Game {
                     active: self.ui_state.active,
                     pay: context.keyboard.is_down(Key::C).then_some(Pay),
                     fire: if left_click
+                        || self.ui_state.touch_fire
                         || context
                             .keyboard
                             .state(Key::Space)
@@ -1592,6 +1603,9 @@ impl GameClient for Mk48Game {
                     },
                     hint,
                 };
+
+                // Consume touch fire so it doesn't repeat every frame.
+                self.ui_state.touch_fire = false;
 
                 // Some things are not idempotent.
                 fn is_significant(control: &Control) -> bool {
@@ -1659,6 +1673,15 @@ impl GameClient for Mk48Game {
             }
             UiEvent::Team(team) => {
                 context.send_to_game(Command::Team(team));
+            }
+            UiEvent::TouchRudder(rudder) => {
+                self.ui_state.touch_rudder = rudder;
+            }
+            UiEvent::TouchThrottle(throttle) => {
+                self.ui_state.touch_throttle = throttle;
+            }
+            UiEvent::TouchFire => {
+                self.ui_state.touch_fire = true;
             }
         }
     }

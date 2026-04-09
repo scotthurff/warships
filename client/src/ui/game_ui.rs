@@ -10,6 +10,7 @@ use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
 use crate::ui::ships_dialog::ShipsDialog;
 use crate::ui::status_overlay::StatusOverlay;
+use crate::ui::touch_controls::TouchControls;
 use crate::ui::upgrade_overlay::UpgradeOverlay;
 use crate::ui::Mk48Phrases;
 use common::altitude::Altitude;
@@ -69,6 +70,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                         score={props.score}
                     />
                     <Hint entity_type={playing.entity_type}/>
+                    <TouchControls/>
                 } else if let UiStatus::Respawning(respawning) = status {
                     <RespawnOverlay status={respawning} score={props.score}/>
                 }
@@ -166,6 +168,12 @@ pub struct UiState {
     pub active: bool,
     pub submerge: bool,
     pub armament: Option<EntityType>,
+    /// Touch rudder: -1.0 (left), 0.0 (center), 1.0 (right)
+    pub touch_rudder: f32,
+    /// Touch throttle: 0.0 (stop) to 1.0 (full)
+    pub touch_throttle: f32,
+    /// Touch fire request (consumed each tick)
+    pub touch_fire: bool,
 }
 
 impl Default for UiState {
@@ -174,6 +182,9 @@ impl Default for UiState {
             active: true,
             submerge: false,
             armament: None,
+            touch_rudder: 0.0,
+            touch_throttle: 0.0,
+            touch_fire: false,
         }
     }
 }
@@ -190,6 +201,12 @@ pub enum UiEvent {
     Submerge(bool),
     Upgrade(EntityType),
     Team(TeamRequest),
+    /// Touch rudder input (-1.0 to 1.0)
+    TouchRudder(f32),
+    /// Touch throttle (0.0 to 1.0)
+    TouchThrottle(f32),
+    /// Touch fire button pressed
+    TouchFire,
 }
 
 #[derive(PartialEq, Clone, Default)]

@@ -14,6 +14,7 @@ pub(crate) mod ships_dialog;
 pub(crate) mod sprite;
 pub(crate) mod status_overlay;
 pub(crate) mod team;
+pub(crate) mod touch_controls;
 pub(crate) mod upgrade_overlay;
 
 pub use game_ui::{
