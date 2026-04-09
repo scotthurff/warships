@@ -1,5 +1,23 @@
 # WARSHIPS — Decision Log
 
+## 2026-04-09: Tap-to-target already works via kodiak touch→mouse conversion
+
+**Context:** Needed tap-to-target aiming for touch devices. Investigated game.rs aim_target pipeline.
+
+**Decision:** Tap-to-target works out of the box. Kodiak converts touch events to mouse position internally (`context.mouse.view_position`). When you tap the screen, turrets aim at that world position. No code changes needed for basic tap aiming.
+
+**What's NOT done:** Target locking (turrets track a specific ship as it moves). This requires maintaining a locked entity ID and updating aim_target each frame to that entity's position. Deferred to Phase 3.
+
+**Consequences:** Touch aiming works for v1 — tap to set aim direction, tap FIRE to shoot. Not as polished as WoWS Blitz lock-on, but functional.
+
+## 2026-04-09: Difficulty selector deferred — Easy mode is default
+
+**Context:** The plan called for Captain/Admiral/Fleet Commander difficulty buttons on the spawn screen. But bot difficulty params (aggression, aim_bias, speed, fire rate) live in the server's bot.rs and can't be changed per-client at runtime without a server-side flag.
+
+**Decision:** Make Easy mode the default (already done — bot AI tuned with lower aggression, worse aim, slower speed, capped level 5). Defer the difficulty selector UI. When we add it, it'll need a server CLI flag or URL parameter.
+
+**Consequences:** All players get Easy difficulty. Good for v1 kid-focused testing. Difficulty selector becomes a Phase 3 task.
+
 ## 2026-04-08: Pivot from custom 3D to mk48.io fork
 
 **Context:** Spent several hours building a custom 3D naval game — first in Three.js (browser), then SceneKit (native). Both had fundamental rendering issues: the Three.js Water shader created ugly reflection artifacts when ships intersected the water plane, and SceneKit had model loading / wave shader issues. Ship models were also a problem — free models were either too high-poly (294K faces, z-fighting) or too low-poly with no textures.
