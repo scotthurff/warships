@@ -14,6 +14,34 @@
             font-weight: 400;
             font-display: swap;
         }
+        /* Override Arial/Helvetica globally — kodiak WebGL text uses "30px Arial"
+           via canvas 2D ctx.font. This @font-face aliases Arial to our monospace. */
+        @font-face {
+            font-family: 'Arial';
+            src: local('Menlo'), local('SF Mono'), local('Courier New');
+            font-weight: 400;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Arial';
+            src: local('Menlo'), local('SF Mono'), local('Courier New');
+            font-weight: 700;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Arial';
+            src: local('Menlo'), local('SF Mono'), local('Courier New');
+            font-weight: 400;
+            font-style: italic;
+        }
+        /* Global body font override */
+        body, * {
+            font-family: 'Menlo', 'SF Mono', 'Courier New', monospace !important;
+        }
+        /* Preserve Black Ops One for the logo */
+        h1 {
+            font-family: 'Black Ops One', 'Menlo', monospace !important;
+        }
     </style>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
     <script>
