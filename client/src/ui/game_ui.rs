@@ -16,7 +16,7 @@ use crate::ui::Mk48Phrases;
 use common::altitude::Altitude;
 use common::angle::Angle;
 use common::death_reason::DeathReason;
-use common::entity::EntityType;
+use common::entity::{EntityId, EntityType};
 use common::protocol::{TeamDto, TeamRequest};
 use common::velocity::Velocity;
 use kodiak_client::glam::Vec2;
@@ -178,6 +178,8 @@ pub struct UiState {
     pub touch_fire: bool,
     /// Touch torpedo request (consumed each tick)
     pub touch_torpedo: bool,
+    /// Locked target entity ID (turrets track this ship)
+    pub locked_target: Option<EntityId>,
 }
 
 impl Default for UiState {
@@ -190,6 +192,7 @@ impl Default for UiState {
             touch_throttle: 0.0,
             touch_fire: false,
             touch_torpedo: false,
+            locked_target: None,
         }
     }
 }

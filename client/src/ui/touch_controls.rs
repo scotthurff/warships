@@ -44,20 +44,6 @@ pub fn touch_controls() -> Html {
         Callback::from(move |_: PointerEvent| { cb.emit(UiEvent::TouchRudder(-1.0)); })
     };
 
-    // ── Speed buttons ──
-    let on_speed_stop = {
-        let cb = ui_event_callback.clone();
-        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchThrottle(0.0)); })
-    };
-    let on_speed_half = {
-        let cb = ui_event_callback.clone();
-        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchThrottle(0.5)); })
-    };
-    let on_speed_full = {
-        let cb = ui_event_callback.clone();
-        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchThrottle(1.0)); })
-    };
-
     // ── Fire buttons ──
     let on_fire = {
         let cb = ui_event_callback.clone();
@@ -68,30 +54,40 @@ pub fn touch_controls() -> Html {
         Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchTorpedo); })
     };
 
-    // Track active speed for highlighting
-    let active_speed = use_state(|| 0u8); // 0=stop, 1=half, 2=full
+    // Track active speed for highlighting: 0=rev, 1=stop, 2=1/4, 3=1/2, 4=full
+    let active_speed = use_state(|| 1u8);
+    let on_speed_rev = {
+        let cb = ui_event_callback.clone();
+        let active = active_speed.clone();
+        Callback::from(move |_: MouseEvent| { active.set(0); cb.emit(UiEvent::TouchThrottle(-0.25)); })
+    };
     let on_speed_stop = {
         let cb = ui_event_callback.clone();
         let active = active_speed.clone();
-        Callback::from(move |_: MouseEvent| { active.set(0); cb.emit(UiEvent::TouchThrottle(0.0)); })
+        Callback::from(move |_: MouseEvent| { active.set(1); cb.emit(UiEvent::TouchThrottle(0.0)); })
+    };
+    let on_speed_quarter = {
+        let cb = ui_event_callback.clone();
+        let active = active_speed.clone();
+        Callback::from(move |_: MouseEvent| { active.set(2); cb.emit(UiEvent::TouchThrottle(0.25)); })
     };
     let on_speed_half = {
         let cb = ui_event_callback.clone();
         let active = active_speed.clone();
-        Callback::from(move |_: MouseEvent| { active.set(1); cb.emit(UiEvent::TouchThrottle(0.5)); })
+        Callback::from(move |_: MouseEvent| { active.set(3); cb.emit(UiEvent::TouchThrottle(0.5)); })
     };
     let on_speed_full = {
         let cb = ui_event_callback.clone();
         let active = active_speed.clone();
-        Callback::from(move |_: MouseEvent| { active.set(2); cb.emit(UiEvent::TouchThrottle(1.0)); })
+        Callback::from(move |_: MouseEvent| { active.set(4); cb.emit(UiEvent::TouchThrottle(1.0)); })
     };
 
     let speed_val = *active_speed;
     let speed_bg = |idx: u8, base_color: &str| -> String {
         if speed_val == idx {
-            format!("{btn_base} width: 56px; height: 44px; background: {base_color}; border: 2px solid white;")
+            format!("{btn_base} width: 44px; height: 40px; font-size: 0.7rem; background: {base_color}; border: 2px solid white;")
         } else {
-            format!("{btn_base} width: 56px; height: 44px; background: {base_color};")
+            format!("{btn_base} width: 44px; height: 40px; font-size: 0.7rem; background: {base_color};")
         }
     };
 
@@ -100,18 +96,26 @@ pub fn touch_controls() -> Html {
             // Navigation controls — bottom left
             <Positioner id="touch_nav" position={Position::BottomLeft{margin: "1rem"}}>
                 <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: center;">
-                    // Speed buttons
-                    <div style="display: flex; gap: 0.4rem;">
+                    // Speed buttons (REV / STOP / 1/4 / 1/2 / FULL)
+                    <div style="display: flex; gap: 0.3rem;">
                         <button
-                            style={speed_bg(0, "rgba(200,50,50,0.4)")}
+                            style={speed_bg(0, "rgba(180,80,40,0.4)")}
+                            onclick={on_speed_rev}
+                        >{"REV"}</button>
+                        <button
+                            style={speed_bg(1, "rgba(200,50,50,0.4)")}
                             onclick={on_speed_stop}
                         >{"STOP"}</button>
                         <button
-                            style={speed_bg(1, "rgba(50,100,200,0.4)")}
+                            style={speed_bg(2, "rgba(50,80,160,0.4)")}
+                            onclick={on_speed_quarter}
+                        >{"1/4"}</button>
+                        <button
+                            style={speed_bg(3, "rgba(50,100,200,0.4)")}
                             onclick={on_speed_half}
                         >{"1/2"}</button>
                         <button
-                            style={speed_bg(2, "rgba(50,180,80,0.4)")}
+                            style={speed_bg(4, "rgba(50,180,80,0.4)")}
                             onclick={on_speed_full}
                         >{"FULL"}</button>
                     </div>

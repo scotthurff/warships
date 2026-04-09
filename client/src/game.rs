@@ -1409,10 +1409,48 @@ impl GameClient for Mk48Game {
         });
 
         // After the above line, mouse world position state may be out-of-date. Recalculate it here.
-        let aim_target = context
+        let raw_aim = context
             .mouse
             .view_position
             .map(|p| self.camera.to_world_position(p));
+
+        // Target lock-on: on touch, find the nearest visible enemy to the aim point
+        // and lock turrets onto it. Updates each frame so turrets track the target.
+        if context.mouse.touch_screen {
+            if let Some(tap_pos) = raw_aim {
+                let mut best_dist = 200.0_f32; // Lock range in world units
+                let mut best_id = None;
+                for (_, contact) in context.state.game.contacts.iter() {
+                    let contact = &contact.view;
+                    if Some(contact.id()) == context.state.game.entity_id {
+                        continue;
+                    }
+                    if contact.entity_type().map(|t| t.data().kind) != Some(EntityKind::Boat) {
+                        continue;
+                    }
+                    let dist = tap_pos.distance(contact.transform().position);
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_id = Some(contact.id());
+                    }
+                }
+                if best_id.is_some() {
+                    self.ui_state.locked_target = best_id;
+                }
+            }
+        }
+
+        // If locked onto a target, aim at that entity's current position.
+        let aim_target = if let Some(locked_id) = self.ui_state.locked_target {
+            if let Some(contact) = context.state.game.contacts.get(&locked_id) {
+                Some(contact.view.transform().position)
+            } else {
+                self.ui_state.locked_target = None;
+                raw_aim
+            }
+        } else {
+            raw_aim
+        };
 
         // Send command later, when lifetimes allow.
         let mut control: Option<Command> = None;
@@ -1457,7 +1495,7 @@ impl GameClient for Mk48Game {
                 }
 
                 // Touch controls: rudder + throttle from UI buttons
-                if self.ui_state.touch_rudder.abs() > 0.01 || self.ui_state.touch_throttle > 0.01 {
+                if self.ui_state.touch_rudder.abs() > 0.01 || self.ui_state.touch_throttle.abs() > 0.01 {
                     guidance = Some(Guidance {
                         direction_target: player_contact.transform().direction
                             + Angle::from_radians(0.3 * self.ui_state.touch_rudder),
