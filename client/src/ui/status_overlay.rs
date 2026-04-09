@@ -110,7 +110,7 @@ pub fn status_overlay(props: &StatusProps) -> Html {
     };
 
     html! {<>
-        <p style="margin: 0; margin-bottom: 0.5rem; font-family: monospace, sans-serif;">
+        <p style="margin: 0; margin-bottom: 0.5rem; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;">
             {data.label.replace(" ", "\u{00A0}")}
             {" "}
             {format!("{:\u{00A0}>4.1}kn", status.velocity.to_knots())}

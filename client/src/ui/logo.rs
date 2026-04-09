@@ -22,7 +22,7 @@ pub fn logo() -> Html {
                 text-transform: uppercase;
             ">{"WARSHIPS"}</h1>
             <div style="
-                font-family: system-ui, sans-serif;
+                font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
                 color: rgba(180,200,220,0.6);
                 font-size: 14px;
                 letter-spacing: 6px;

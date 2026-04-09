@@ -39,19 +39,24 @@ pub struct Bot {
 impl Default for Bot {
     fn default() -> Self {
         let mut rng = thread_rng();
+        let difficulty = common::Difficulty::get_global();
 
         fn random_level(rng: &mut ThreadRng) -> u8 {
             rng.gen_range(1..=EntityData::MAX_BOAT_LEVEL)
         }
 
+        // Tune bot params based on difficulty
+        let (max_aggro, aim_radius, level_cap, speed_mult, fire_cap) = match difficulty {
+            common::Difficulty::Captain => (0.04, 25.0, 5, 0.65, 0.4),
+            common::Difficulty::Admiral => (0.1, 10.0, 8, 0.8, 1.0),
+            common::Difficulty::FleetCommander => (0.2, 3.0, 10, 0.9, 1.0),
+        };
+
         Self {
-            // Raise aggression to a power such that lower values are more common.
-            aggression: rng.gen::<f32>().powi(2) * Self::MAX_AGGRESSION,
+            aggression: rng.gen::<f32>().powi(2) * max_aggro,
             steer_bias: rng.gen::<Angle>() * 0.1,
-            // WARSHIPS: Increased from 10 to 25 so bots miss more (kid-friendly).
-            aim_bias: gen_radius(&mut rng, 25.0),
-            // WARSHIPS: Cap at level 5 (was MAX_BOAT_LEVEL). Bots stay in smaller ships.
-            level_ambition: random_level(&mut rng).min(random_level(&mut rng)).min(5),
+            aim_bias: gen_radius(&mut rng, aim_radius),
+            level_ambition: random_level(&mut rng).min(random_level(&mut rng)).min(level_cap),
             spawned_at_least_once: false,
             was_submerging: false,
         }
@@ -59,10 +64,8 @@ impl Default for Bot {
 }
 
 impl Bot {
-    /// This arbitrary value controls how chill the bots are. If too high, bots are trigger-happy
-    /// maniacs, and the waters get filled with stray torpedoes.
-    /// WARSHIPS: Reduced from 0.1 to 0.04 for kid-friendly difficulty.
-    const MAX_AGGRESSION: f32 = 0.04;
+    /// Max aggression is now set per-difficulty in Default::default().
+    const MAX_AGGRESSION: f32 = 0.2; // Upper bound, actual value depends on difficulty.
 
     /// Returns true if there is land or border at the given position.
     fn is_land_or_border(pos: Vec2, terrain: &Terrain, world_radius: f32) -> bool {
@@ -323,15 +326,21 @@ impl Bot {
             let mut ret = Command::Control(Control {
                 guidance: Some(Guidance {
                     direction_target: Angle::from(movement) + self.steer_bias,
-                    // WARSHIPS: Reduced from 0.8 to 0.65 for slower bots.
-                    velocity_target: data.speed * 0.65,
+                    velocity_target: data.speed * match common::Difficulty::get_global() {
+                        common::Difficulty::Captain => 0.65,
+                        common::Difficulty::Admiral => 0.8,
+                        common::Difficulty::FleetCommander => 0.9,
+                    },
                 }),
                 submerge: self.was_submerging,
                 aim_target: best_firing_solution.map(|solution| solution.1 + self.aim_bias),
                 active: health_percent >= 0.5,
                 fire: best_firing_solution
-                    // WARSHIPS: Reduced fire rate — bots shoot less aggressively.
-                    .filter(|_| rng.gen_bool((aggression as f64).min(0.4)))
+                    .filter(|_| rng.gen_bool((aggression as f64).min(match common::Difficulty::get_global() {
+                        common::Difficulty::Captain => 0.4,
+                        common::Difficulty::Admiral => 1.0,
+                        common::Difficulty::FleetCommander => 1.0,
+                    })))
                     .map(|sol| Fire {
                         armament_index: sol.0,
                     }),

@@ -79,8 +79,23 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             } else {
                 if let UiStatus::Spawning = status {
                     <Positioner id="spawn" position={Position::Center}>
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2rem; min-width: 50%;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 1.5rem; min-width: 50%;">
                             {logo()}
+                            // Difficulty selector
+                            <div style="display: flex; gap: 0.5rem; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;">
+                                <button
+                                    style="background: rgba(50,180,80,0.5); border: 2px solid rgba(80,220,100,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Captain); })}
+                                >{"Captain"}</button>
+                                <button
+                                    style="background: rgba(50,100,200,0.5); border: 2px solid rgba(80,140,240,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Admiral); })}
+                                >{"Admiral"}</button>
+                                <button
+                                    style="background: rgba(200,50,50,0.5); border: 2px solid rgba(240,80,80,0.5); border-radius: 0.5rem; color: white; cursor: pointer; padding: 0.5rem 0.8rem; font-size: 0.8rem; font-family: inherit;"
+                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::FleetCommander); })}
+                                >{"Fleet Cmdr"}</button>
+                            </div>
                             <button
                                 id="play_button"
                                 style="
@@ -90,6 +105,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                                     color: white;
                                     cursor: pointer;
                                     font-size: 3.25rem;
+                                    font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
                                     padding: 0.7rem 2rem;
                                     white-space: nowrap;
                                     min-width: 12rem;
@@ -101,8 +117,8 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                     </Positioner>
                 }
                 <div style="position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 2rem;">
-                    <a href="/help/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: system-ui; font-size: 0.9rem;">{"Help"}</a>
-                    <a href="/ships/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: system-ui; font-size: 0.9rem;">{"Ships"}</a>
+                    <a href="/help/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 0.9rem;">{"Help"}</a>
+                    <a href="/ships/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 0.9rem;">{"Ships"}</a>
                 </div>
             }
         </>
