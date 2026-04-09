@@ -1699,7 +1699,6 @@ dependencies = [
 [[package]]
 name = "kodiak_common"
 version = "0.2.0"
-source = "git+https://github.com/softbearstudios/kodiak?tag=0.2.0#7fbd2c20a3c7c54e3a32e73acc6830e3fb74301c"
 dependencies = [
  "actix",
  "arrayvec 0.7.2",
@@ -1725,7 +1724,6 @@ dependencies = [
 [[package]]
 name = "kodiak_macros"
 version = "0.2.0"
-source = "git+https://github.com/softbearstudios/kodiak?tag=0.2.0#7fbd2c20a3c7c54e3a32e73acc6830e3fb74301c"
 dependencies = [
  "convert_case 0.5.0",
  "itertools",
@@ -1740,7 +1738,6 @@ dependencies = [
 [[package]]
 name = "kodiak_server"
 version = "0.2.0"
-source = "git+https://github.com/softbearstudios/kodiak?tag=0.2.0#7fbd2c20a3c7c54e3a32e73acc6830e3fb74301c"
 dependencies = [
  "actix",
  "async-trait",
@@ -2328,7 +2325,6 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 [[package]]
 name = "plasma_protocol"
 version = "0.2.0"
-source = "git+https://github.com/softbearstudios/kodiak?tag=0.2.0#7fbd2c20a3c7c54e3a32e73acc6830e3fb74301c"
 dependencies = [
  "actix",
  "arrayvec 0.7.2",
