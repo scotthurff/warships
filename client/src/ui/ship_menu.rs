@@ -44,13 +44,18 @@ pub fn ship_menu(props: &ShipMenuProps) -> Html {
     let ships_style = css!(
         r#"
         display: grid;
-        grid-gap: 1rem 1rem;
+        grid-gap: 1.2rem 1.2rem;
         grid-template-columns: repeat(1, 1fr);
         margin: auto;
         margin-top: 1rem;
         user-select: none;
         width: min-content;
         -webkit-user-drag: none;
+        /* Larger touch targets for ship cards */
+        button, a {
+            min-height: 48px;
+            padding: 0.5rem;
+        }
     "#
     );
 

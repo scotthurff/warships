@@ -29,11 +29,12 @@ pub fn status_overlay(props: &StatusProps) -> Html {
     let button_style = css!(
         r#"
         color: white;
-		padding: 0.5rem;
+		padding: 0.75rem;
 		filter: brightness(0.8);
 		user-select: none;
 		cursor: pointer;
         min-width: 5rem;
+        min-height: 44px;
 
 		:hover {
             background-color: #44444440;

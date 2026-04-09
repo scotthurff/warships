@@ -70,7 +70,9 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                         score={props.score}
                     />
                     <Hint entity_type={playing.entity_type}/>
-                    <TouchControls/>
+                    if props.touch_screen {
+                        <TouchControls/>
+                    }
                 } else if let UiStatus::Respawning(respawning) = status {
                     <RespawnOverlay status={respawning} score={props.score}/>
                 }
@@ -223,6 +225,7 @@ pub struct UiProps {
     pub members: Box<[PlayerId]>,
     pub joiners: Box<[PlayerId]>,
     pub joins: Box<[TeamId]>,
+    pub touch_screen: bool,
 }
 
 /// Mutually exclusive statuses.
@@ -267,6 +270,7 @@ impl Mk48Game {
             members: context.state.game.members.clone(),
             joiners: context.state.game.joiners.clone(),
             joins: context.state.game.joins.clone(),
+            touch_screen: context.mouse.touch_screen,
         };
 
         context.set_ui_props(props, in_game);
