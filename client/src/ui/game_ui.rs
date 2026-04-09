@@ -10,7 +10,6 @@ use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
 use crate::ui::ships_dialog::ShipsDialog;
 use crate::ui::status_overlay::StatusOverlay;
-use crate::ui::team::TeamOverlay;
 use crate::ui::upgrade_overlay::UpgradeOverlay;
 use crate::ui::Mk48Phrases;
 use common::altitude::Altitude;
@@ -22,10 +21,10 @@ use common::velocity::Velocity;
 use kodiak_client::glam::Vec2;
 use kodiak_client::yew_router::Routable;
 use kodiak_client::{
-    splash_links, splash_nexus_icons, splash_sign_in_link, splash_social_media, translate, use_ctw,
-    use_gctw, ChatOverlay, ClientContext, GameClient, Instruction, LeaderboardOverlay, PathParam,
+    translate, use_ctw,
+    use_gctw, ClientContext, GameClient, Instruction, PathParam,
     PlayerAlias, PlayerId, Position, Positioner, PropertiesWrapper, RoutableExt, SmolRoutable,
-    SpawnOverlay, SplashNexusIconsProps, SplashSocialMediaProps, TeamId, Translator,
+    TeamId, Translator,
 };
 use std::collections::HashMap;
 use stylist::yew::styled_component;
@@ -36,9 +35,6 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let ctw = use_ctw();
     let nexus = ctw.escaping.is_escaping();
     let gctw = use_gctw::<Mk48Game>();
-    let splash_social_media_props = SplashSocialMediaProps::default()
-        .github("https://github.com/SoftbearStudios/mk48")
-        .google_play("https://play.google.com/store/apps/details?id=com.softbear.mk48");
     let on_play = gctw.send_ui_event_callback.reform(|alias| UiEvent::Spawn {
         alias,
         entity_type: EntityType::G5,
@@ -72,43 +68,39 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                         status={playing.clone()}
                         score={props.score}
                     />
-                    <TeamOverlay
-                        position={Position::TopLeft{margin}}
-                        style="max-width:25%;"
-                        team_proximity={playing.team_proximity.clone()}
-                        teams={props.teams.clone()}
-                        members={props.members.clone()}
-                        joiners={props.joiners.clone()}
-                        joins={props.joins.clone()}
-                        label={Mk48Phrases::team_fleet_label as fn(&Translator) -> String}
-                        name_placeholder={Mk48Phrases::team_fleet_name_placeholder as fn(&Translator) -> String}
-                    />
                     <Hint entity_type={playing.entity_type}/>
                 } else if let UiStatus::Respawning(respawning) = status {
                     <RespawnOverlay status={respawning} score={props.score}/>
                 }
-                <ChatOverlay
-                    position={Position::BottomLeft{margin}}
-                    style="max-width:25%;"
-                    hints={HINTS}
-                    label={Translator::chat_radio_label as fn(&Translator) -> String}
-                />
             } else {
                 if let UiStatus::Spawning = status {
-                    <SpawnOverlay {on_play}>
-                        {logo()}
-                    </SpawnOverlay>
+                    <Positioner id="spawn" position={Position::Center}>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2rem; min-width: 50%;">
+                            {logo()}
+                            <button
+                                id="play_button"
+                                style="
+                                    background-color: #549f57;
+                                    border-radius: 1rem;
+                                    border: 1px solid #61b365;
+                                    color: white;
+                                    cursor: pointer;
+                                    font-size: 3.25rem;
+                                    padding: 0.7rem 2rem;
+                                    white-space: nowrap;
+                                    min-width: 12rem;
+                                    width: 100%;
+                                "
+                                onclick={on_play.reform(|_: MouseEvent| PlayerAlias::default())}
+                            >{"Play"}</button>
+                        </div>
+                    </Positioner>
                 }
-                {splash_social_media(&ctw, splash_social_media_props)}
-                {splash_links(&ctw, &[Mk48Route::Help], Default::default())}
-                {splash_sign_in_link(&ctw)}
+                <div style="position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 2rem;">
+                    <a href="/help/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: system-ui; font-size: 0.9rem;">{"Help"}</a>
+                    <a href="/ships/" style="color: rgba(255,255,255,0.6); text-decoration: none; font-family: system-ui; font-size: 0.9rem;">{"Ships"}</a>
+                </div>
             }
-            {splash_nexus_icons(&ctw, SplashNexusIconsProps::default().invitation(true))}
-            <LeaderboardOverlay
-                position={Position::TopRight{margin}}
-                style="max-width:25%;"
-                liveboard={matches!(props.status, UiStatus::Playing(_)) && !nexus}
-            />
         </>
     }
 }

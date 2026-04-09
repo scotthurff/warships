@@ -14,11 +14,11 @@ extern crate core;
 extern crate test;
 
 pub const MK48_CONSTANTS: &'static GameConstants = &GameConstants {
-    game_id: "Mk48",
-    name: "Mk48.io",
-    domain: "mk48.io",
-    geodns_enabled: true,
-    trademark: "Mk48.io",
+    game_id: "Warships",
+    name: "WARSHIPS",
+    domain: "localhost",
+    geodns_enabled: false,
+    trademark: "WARSHIPS",
     server_names: &[
         "Atlantic", "Pacific", "Fjord", "Kraken", "Scotia", "Barents", "Bering", "Chukchi",
     ],
