@@ -54,6 +54,16 @@ pub fn touch_controls() -> Html {
         Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchTorpedo); })
     };
 
+    // ── Zoom buttons ──
+    let on_zoom_in = {
+        let cb = ui_event_callback.clone();
+        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchZoom(-2.0)); })
+    };
+    let on_zoom_out = {
+        let cb = ui_event_callback.clone();
+        Callback::from(move |_: MouseEvent| { cb.emit(UiEvent::TouchZoom(2.0)); })
+    };
+
     // Track active speed for highlighting: 0=rev, 1=stop, 2=1/4, 3=1/2, 4=full
     let active_speed = use_state(|| 1u8);
     let on_speed_rev = {
@@ -148,6 +158,20 @@ pub fn touch_controls() -> Html {
                         style={format!("{btn_base} width: 80px; height: 80px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #ff4444, #aa1111); border: 3px solid rgba(255,100,80,0.6); box-shadow: 0 0 20px rgba(255,60,40,0.3); font-size: 1rem;")}
                         onclick={on_fire}
                     >{"FIRE"}</button>
+                </div>
+            </Positioner>
+
+            // Zoom buttons — top right
+            <Positioner id="touch_zoom" position={Position::TopRight{margin: "1rem"}}>
+                <div style="display: flex; gap: 0.4rem;">
+                    <button
+                        style={format!("{btn_base} width: 48px; height: 48px; font-size: 1.4rem; background: rgba(0,0,0,0.35);")}
+                        onclick={on_zoom_in}
+                    >{"+"}</button>
+                    <button
+                        style={format!("{btn_base} width: 48px; height: 48px; font-size: 1.4rem; background: rgba(0,0,0,0.35);")}
+                        onclick={on_zoom_out}
+                    >{"-"}</button>
                 </div>
             </Positioner>
         </>

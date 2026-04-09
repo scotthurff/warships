@@ -1726,6 +1726,10 @@ impl GameClient for Mk48Game {
             UiEvent::TouchTorpedo => {
                 self.ui_state.touch_torpedo = true;
             }
+            UiEvent::TouchZoom(delta) => {
+                self.mk48_camera.zoom(delta);
+                self.first_zoom = false;
+            }
         }
     }
 }

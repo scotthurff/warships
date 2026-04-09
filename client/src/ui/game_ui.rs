@@ -217,6 +217,8 @@ pub enum UiEvent {
     TouchFire,
     /// Touch torpedo button pressed
     TouchTorpedo,
+    /// Touch zoom (positive = zoom in, negative = zoom out)
+    TouchZoom(f32),
 }
 
 #[derive(PartialEq, Clone, Default)]
