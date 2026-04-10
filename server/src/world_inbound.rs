@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::entity::Entity;
+use crate::match_state::ArenaLayout;
 use crate::player::PlayerTuple;
 use crate::player::PlayerTupleRepo;
 use crate::player::Status;
@@ -54,6 +55,13 @@ impl CommandTrait for Spawn {
         if rank >= Some(RankNumber::Rank3) {
             player.score = player.score.max(level_to_score(2));
         }
+
+        // Remember the picked ship for Capture the Area auto-respawns.
+        // Free roam players use this harmlessly too — it's just a memo.
+        player.selected_loadout = Some(self.entity_type);
+        // Record the ship class in match stats so the end-of-match table
+        // can show which ship each player used.
+        player.match_stats.ship_class = Some(self.entity_type);
 
         drop(player);
         let player = player_tuple.borrow_player();
@@ -108,36 +116,60 @@ impl CommandTrait for Spawn {
         }
          */
 
-        let exclusion_zone = match &player.status {
-            // Player is excluded from spawning too close to where another player sunk them, for
-            // fairness reasons.
-            Status::Dead {
-                reason,
-                position,
-                time,
-                ..
-            } => {
-                // Don't spawn too far away from where you died.
-                spawn_position = *position;
-                spawn_radius = (0.4 * world.radius).clamp(1200.0, 3000.0).min(world.radius);
+        // Capture the Area override: if the player is in CTA mode and has
+        // been assigned a team, force-spawn at their team base with a tight
+        // radius. This bypasses mk48's level-based vertical bias and any
+        // death exclusion zone — in CTA you always respawn at your own base.
+        let cta_team_spawn = if player.game_mode == GameMode::CaptureTheArea {
+            player.match_team.map(|team| match team {
+                crate::match_state::Team::Blue => ArenaLayout::DEFAULT.blue_base,
+                crate::match_state::Team::Red => ArenaLayout::DEFAULT.red_base,
+            })
+        } else {
+            None
+        };
 
-                // Don't spawn right where you died either.
-                let exclusion_seconds =
-                    if player.score > level_to_score(EntityData::MAX_BOAT_LEVEL / 2) {
-                        20
+        if let Some(base_pos) = cta_team_spawn {
+            spawn_position = base_pos;
+            spawn_radius = ArenaLayout::DEFAULT.base_radius * 0.8;
+        }
+
+        let exclusion_zone = if cta_team_spawn.is_some() {
+            // CTA deaths never set a spawn-exclusion zone — you always
+            // respawn at your own base, even if you were killed there.
+            None
+        } else {
+            match &player.status {
+                // Player is excluded from spawning too close to where another player sunk them, for
+                // fairness reasons.
+                Status::Dead {
+                    reason,
+                    position,
+                    time,
+                    ..
+                } => {
+                    // Don't spawn too far away from where you died.
+                    spawn_position = *position;
+                    spawn_radius = (0.4 * world.radius).clamp(1200.0, 3000.0).min(world.radius);
+
+                    // Don't spawn right where you died either.
+                    let exclusion_seconds =
+                        if player.score > level_to_score(EntityData::MAX_BOAT_LEVEL / 2) {
+                            20
+                        } else {
+                            10
+                        };
+
+                    if reason.is_due_to_player()
+                        && time.elapsed() < Duration::from_secs(exclusion_seconds)
+                    {
+                        Some(*position)
                     } else {
-                        10
-                    };
-
-                if reason.is_due_to_player()
-                    && time.elapsed() < Duration::from_secs(exclusion_seconds)
-                {
-                    Some(*position)
-                } else {
-                    None
+                        None
+                    }
                 }
+                _ => None,
             }
-            _ => None,
         };
 
         if player.team_id().is_some() || invitation_accepted.is_some() {
