@@ -8,6 +8,9 @@
 //! via the [`BoatSnapshot`] input and [`MatchEvent`] output.
 
 use common::entity::EntityType;
+// Re-export the shared protocol types under their local names so match_state.rs
+// (and its tests) read the same as before the `common::protocol` move.
+pub use common::protocol::{MatchPhase, MatchTeam as Team, MatchWinner as Winner};
 use kodiak_server::glam::Vec2;
 use kodiak_server::rand::{self, Rng};
 use std::time::Duration;
@@ -42,43 +45,11 @@ impl ArenaLayout {
     };
 }
 
-// ─── Teams ────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Team {
-    Blue,
-    Red,
-}
-
-impl Team {
-    pub fn opponent(self) -> Self {
-        match self {
-            Team::Blue => Team::Red,
-            Team::Red => Team::Blue,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Winner {
-    Blue,
-    Red,
-    Draw,
-}
-
-// ─── Match Phase (pure FSM) ───────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MatchPhase {
-    /// Before any match has started — waiting for player to pick ship + click Start
-    Waiting,
-    /// 3-2-1-FIGHT pre-match intro
-    Countdown,
-    /// Main 5-minute gameplay
-    Playing,
-    /// Match concluded, showing results
-    Ended { winner: Winner },
-}
+// ─── Teams + Phase ────────────────────────────────────────────────────────
+//
+// `Team`, `Winner`, and `MatchPhase` are defined in `common::protocol` so
+// they can cross the client/server boundary. They're re-exported above for
+// local ergonomics.
 
 // ─── Fleet Compositions ───────────────────────────────────────────────────
 

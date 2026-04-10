@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::entities::*;
+use crate::match_state::Team;
 use crate::server::PlayerExtension;
 use crate::team::{PlayerTeamData, TeamRepo};
 use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
 use common::death_reason::DeathReason;
-use common::protocol::Hint;
+use common::entity::EntityType;
+use common::protocol::{GameMode, Hint};
 use kodiak_server::glam::Vec2;
 use kodiak_server::{ArenaService, PlayerAlias, PlayerId, RankNumber, TeamId};
 use std::collections::HashMap;
@@ -99,6 +101,19 @@ impl Status {
     }
 }
 
+/// Per-player match stats, reset each match.
+#[derive(Debug, Default, Clone)]
+pub struct PlayerMatchStats {
+    /// Ships destroyed this match.
+    pub kills: u32,
+    /// Base captures contributed to this match.
+    pub captures: u32,
+    /// Points scored this match (kills + capture share).
+    pub personal_points: u32,
+    /// Ship class chosen for this match (for end-of-match breakdown).
+    pub ship_class: Option<EntityType>,
+}
+
 /// Player is the owner of a boat, either a real person or a bot.
 #[derive(Debug)]
 pub struct TempPlayer {
@@ -107,6 +122,15 @@ pub struct TempPlayer {
     pub rank: Option<RankNumber>,
     pub score: u32,
     pub team: PlayerTeamData,
+    /// Which game mode this player chose on the title screen. Defaults to Free
+    /// Roam. Persists until the player returns to the title screen.
+    pub game_mode: GameMode,
+    /// Team assignment for Capture the Area mode (Blue, Red, or None in Free Roam).
+    pub match_team: Option<Team>,
+    /// Ship the player selected for this match (set on spawn).
+    pub selected_loadout: Option<EntityType>,
+    /// Stats for the current match, reset on Play Again.
+    pub match_stats: PlayerMatchStats,
     /// Flags set each tick based on inputs.
     /// Only cleared if player has a boat.
     /// Cleared once when the boat is spawn and once in each physics tick.
@@ -126,6 +150,10 @@ impl TempPlayer {
             rank,
             score: 0,
             team: Default::default(),
+            game_mode: GameMode::default(),
+            match_team: None,
+            selected_loadout: None,
+            match_stats: PlayerMatchStats::default(),
             flags: Flags::default(),
             hint: Hint::default(),
             status: Status::Spawning,

@@ -25,6 +25,79 @@ pub struct Update {
     pub world_radius: f32,
     pub terrain: Box<TerrainUpdate>,
     pub team: Vec<TeamUpdate>,
+    /// Match state for Capture the Area mode. `None` in Free Roam.
+    pub match_update: Option<MatchUpdate>,
+}
+
+// ─── Capture the Area (Team Deathmatch) protocol types ───────────────────
+
+/// Which game mode the player is in. Defaults to Free Roam.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum GameMode {
+    /// mk48 free-roam default. No match clock, dynamic arena, no forced teams.
+    FreeRoam,
+    /// 5-minute Blue vs Red two-base capture match.
+    CaptureTheArea,
+}
+
+impl Default for GameMode {
+    fn default() -> Self {
+        Self::FreeRoam
+    }
+}
+
+/// Team assignment within a Capture the Area match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum MatchTeam {
+    Blue,
+    Red,
+}
+
+impl MatchTeam {
+    pub fn opponent(self) -> Self {
+        match self {
+            Self::Blue => Self::Red,
+            Self::Red => Self::Blue,
+        }
+    }
+}
+
+/// Final match result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum MatchWinner {
+    Blue,
+    Red,
+    Draw,
+}
+
+/// Current match lifecycle phase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum MatchPhase {
+    /// Before `StartMatch` is received. Waiting for the player.
+    Waiting,
+    /// 3-2-1-FIGHT intro.
+    Countdown,
+    /// Normal gameplay, clock decrementing.
+    Playing,
+    /// Match is over, winner decided, frozen until `PlayAgain` triggers reset.
+    Ended { winner: MatchWinner },
+}
+
+/// Per-tick match state broadcast to clients during Capture the Area.
+/// Sent at ~2 Hz during `Playing`. Not sent in Free Roam.
+#[derive(Clone, Copy, Debug, Encode, Decode)]
+pub struct MatchUpdate {
+    /// Epoch — bumps on every `reset()`. Clients discard stale packets.
+    pub match_id: u32,
+    pub phase: MatchPhase,
+    /// Milliseconds remaining in the current phase (Countdown or Playing).
+    pub remaining_ms: u32,
+    pub blue_score: u32,
+    pub red_score: u32,
+    /// Progress (ms) toward Red capturing the Blue base.
+    pub blue_base_capture_ms: u32,
+    /// Progress (ms) toward Blue capturing the Red base.
+    pub red_base_capture_ms: u32,
 }
 
 /// Updates for terrain chunks.
@@ -39,6 +112,15 @@ pub enum Command {
     Spawn(Spawn),
     Upgrade(Upgrade),
     Team(TeamRequest),
+    /// Set the player's game mode. Sent from the title screen before spawn.
+    /// Mode persists for the session until the player returns to the title screen.
+    SelectGameMode(SelectGameMode),
+}
+
+/// Select a game mode on the title screen.
+#[derive(Clone, Encode, Decode, Debug)]
+pub struct SelectGameMode {
+    pub mode: GameMode,
 }
 
 /// Generic command to control one's ship.

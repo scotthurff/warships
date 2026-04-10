@@ -89,6 +89,9 @@ impl<'a, I: Iterator<Item = ContactRef<'a>>> CompleteRef<'a, I> {
         *loaded_chunks = new_loaded_chunks;
 
         Update {
+            // Match state is only populated in Capture the Area mode,
+            // wired in task #28. In Free Roam (and until then) it stays `None`.
+            match_update: None,
             contacts: self
                 .contacts
                 .unwrap()

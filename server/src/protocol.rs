@@ -33,6 +33,26 @@ impl AsCommandTrait for Command {
             Command::Spawn(ref v) => v as &dyn CommandTrait,
             Command::Upgrade(ref v) => v as &dyn CommandTrait,
             Command::Team(ref v) => v as &dyn CommandTrait,
+            Command::SelectGameMode(ref v) => v as &dyn CommandTrait,
         }
+    }
+}
+
+/// Set the player's game mode (Free Roam or Capture the Area). Sent from the
+/// title-screen mode picker before the player spawns. Mode persists for the
+/// session until the player explicitly returns to the title screen.
+impl CommandTrait for SelectGameMode {
+    fn apply(
+        &self,
+        _world: &mut World,
+        player_tuple: &Arc<PlayerTuple>,
+        _players: &PlayerTupleRepo,
+        _teams: &mut TeamRepo<Server>,
+        _invitation_accepted: Option<InvitationDto>,
+        _rank: Option<RankNumber>,
+    ) -> Result<(), &'static str> {
+        let mut player = player_tuple.borrow_player_mut();
+        player.game_mode = self.mode;
+        Ok(())
     }
 }

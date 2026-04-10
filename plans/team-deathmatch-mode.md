@@ -1,10 +1,38 @@
 # feat: Blue vs Red Team Deathmatch (Two-Base Capture Mode)
 
+> **User-facing name:** "Capture the Area"
+> **Internal name:** Team Deathmatch / `MatchState` / `GameMode::CaptureTheArea`
+
 ## Overview
 
-Replace mk48's free-roam gameplay with a timed **5-minute team deathmatch**. Each team has a home base that the enemy must hold for 30 continuous seconds to capture and score. Player is always on **Blue** with 4 AI allies vs 5 **Red** AI enemies. At the end of 5 minutes, the team with the most points wins. Per-player stats (kills, captures, points) are tracked and displayed on the results screen.
+Add a second game mode alongside the existing free-roam: a timed **5-minute two-base capture match**. Each team has a home base that the enemy must hold for 30 continuous seconds to capture and score. Player is always on **Blue** with 4 AI allies vs 5 **Red** AI enemies. At the end of 5 minutes, the team with the most points wins. Per-player stats (kills, captures, points) are tracked and displayed on the results screen.
 
-This is the game's new primary mode. No free-roam. No multiplayer lobby. Every session is a match.
+**Free-roam remains the default.** Players choose between "Free Roam" and "Capture the Area" on the title screen before spawning. No multiplayer lobby. Single-player vs bots in both modes.
+
+### Game Mode Architecture
+
+A new `GameMode` enum lives on the server and is selected per-client before spawn:
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameMode {
+    FreeRoam,        // mk48 default — dynamic arena, no match clock, no teams
+    CaptureTheArea,  // This plan — 5min, two bases, Blue vs Red, scored
+}
+```
+
+**When in `FreeRoam`:**
+- `MatchState::tick()` is skipped entirely
+- Bots spawn unassigned (`match_team: None`), using existing mk48 AI
+- Arena uses mk48's dynamic sizing
+- No match HUD, no countdown, no results screen
+- Behaves exactly as it does today
+
+**When in `CaptureTheArea`:**
+- `MatchState` runs, ticks captures, emits events
+- Bots force-assigned to Blue/Red in 4+5 split
+- Arena fixed at 1200 radius
+- Match HUD, countdown overlay, results screen all active
 
 ---
 
@@ -468,6 +496,12 @@ if player.status.is_dead() && player.death_time.elapsed() >= Duration::from_secs
 #### 7. Protocol additions — `common/src/protocol.rs`
 
 ```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GameMode {
+    FreeRoam,
+    CaptureTheArea,
+}
+
 pub struct MatchUpdate {
     pub match_id: u32,             // Epoch — client discards stale packets
     pub phase: MatchPhase,
@@ -487,13 +521,14 @@ pub struct MatchStartInfo {
 
 pub enum Command {
     // ... existing
+    SelectGameMode { mode: GameMode }, // Sent from title screen
     SelectShip { entity_type: EntityType },
-    StartMatch,  // Client signals ready after ship selection
-    PlayAgain,   // Client requests reset()
+    StartMatch,  // Client signals ready after ship selection (CTA only)
+    PlayAgain,   // Client requests reset() (CTA only)
 }
 ```
 
-**Send cadence:** `MatchUpdate` at 2 Hz during `Playing` (scores change slowly). `MatchStartInfo` is a one-shot on phase transition.
+**Send cadence:** `MatchUpdate` at 2 Hz during `Playing` (scores change slowly). `MatchStartInfo` is a one-shot on phase transition. **Neither is sent in `FreeRoam` mode.**
 
 #### 8. Unit tests — `server/src/match_state.rs` (mandatory)
 
@@ -538,6 +573,33 @@ mod tests {
 ```
 
 ### Client-side Changes
+
+#### 0. Title-screen mode selector — `client/src/ui/game_ui.rs`
+
+Before the ship picker, present a mode selector on the title/spawn screen. Two big tiles:
+
+```
+┌─────────────────────────────────────────┐
+│              WARSHIPS                   │
+│                                         │
+│   ┌──────────────┐  ┌──────────────┐    │
+│   │              │  │              │    │
+│   │  FREE ROAM   │  │  CAPTURE     │    │
+│   │              │  │  THE AREA    │    │
+│   │   Explore    │  │   5v5 Match  │    │
+│   │              │  │              │    │
+│   └──────────────┘  └──────────────┘    │
+│                                         │
+│          Difficulty: [ Easy ▾ ]          │
+└─────────────────────────────────────────┘
+```
+
+- Free Roam tile → existing spawn flow (difficulty + ship picker → spawn)
+- Capture the Area tile → countdown → match (also shows ship picker after)
+- Wargame panel styling, 80pt touch targets, Black Ops One labels
+- Selected mode is sent to the server via `Command::SelectGameMode { mode: GameMode }` **before** `SelectShip` / `Spawn`
+
+**Mode persistence rule:** Once a mode is chosen on the title screen, it persists for the entire session until the player explicitly returns to the title screen. "Play Again" on the match-end screen stays in the current mode (no mode picker shown) — it calls `reset()` on the existing `MatchState` and re-runs the countdown. To switch modes, the player must hit "Quit to Title" from the pause menu or match-end screen.
 
 #### 1. Pre-match ship picker — `client/src/ui/game_ui.rs`
 
@@ -627,21 +689,26 @@ When player dies, show brief "RESPAWNING..." overlay (2s countdown). No ship sel
 
 ## Implementation Phases
 
-### Phase 1: Match State Machine + Tests (Day 1)
+### Phase 1: Match State Machine + Tests + Mode Gating (Day 1)
 
 **Server:**
-- Create `server/src/match_state.rs` with full FSM, events, `tick()`, `reset()`
-- **Unit tests for all state transitions and capture mechanics** (see test list above)
-- Add `team`, `selected_loadout`, `match_stats` to `Player`
-- Force team assignment on spawn (human = Blue, first 4 bots = Blue, next 5 bots = Red)
-- Structured logging: `info!` on match start/end, `debug!` on phase changes
-- Protocol additions: `MatchUpdate`, `MatchStartInfo`, `SelectShip`, `StartMatch`, `PlayAgain` commands
-- Hook match tick into server main loop
+- Create `server/src/match_state.rs` with full FSM, events, `tick()`, `reset()` ✅ (done, commit 31779ef)
+- **Unit tests for all state transitions and capture mechanics** (see test list above) ✅
+- Add `team`, `selected_loadout`, `match_stats` to `Player` ✅
+- Add `GameMode` enum on server + per-player `game_mode: GameMode` field (default `FreeRoam`)
+- Wrap `match_state` in `Option<MatchState>` on the server, only `Some` when any player is in `CaptureTheArea`
+- Force team assignment on spawn **only in `CaptureTheArea`** (human = Blue, first 4 bots = Blue, next 5 bots = Red). Free roam bots stay unassigned.
+- Structured logging: `info!` on mode change / match start/end, `debug!` on phase changes
+- Protocol additions: `GameMode`, `MatchUpdate`, `MatchStartInfo`, `SelectGameMode`, `SelectShip`, `StartMatch`, `PlayAgain` commands
+- Hook match tick into server main loop **gated on game mode**
 
 **Client:**
-- Display timer + raw scores (no styling yet) so the timer/scores are visibly ticking
+- Title-screen mode selector ("Free Roam" | "Capture the Area") — minimal styling, proof of flow
+- Send `Command::SelectGameMode` on tile click before the existing spawn command
+- In `CaptureTheArea`: display raw timer + scores (no styling yet) so the data flows end-to-end
+- In `FreeRoam`: no HUD changes — game behaves exactly as today
 
-**Deliverable:** Unit tests passing. Server ticks a match clock. Client sees timer counting down.
+**Deliverable:** Unit tests passing. Free roam still works unchanged. Selecting "Capture the Area" on title screen starts a match, server ticks clock, client shows timer.
 
 ### Phase 2: Capture Mechanics + Kill Scoring (Day 2)
 
@@ -719,7 +786,11 @@ When player dies, show brief "RESPAWNING..." overlay (2s countdown). No ship sel
 7. ✅ Pre-match 3-2-1 countdown
 8. ✅ Per-player stats tracked and displayed on results (kills, captures, ship, points)
 9. ✅ Play Again via proper `reset()` method (not server restart)
-10. ✅ Arena is fixed at 1200 radius, edge damage beyond
+10. ✅ Arena is fixed at 1200 radius in CTA mode, edge damage beyond
+11. ✅ **Free Roam stays as the default mode**, CTA is a second selectable mode
+12. ✅ **Title screen mode selector** — user-facing label is "Capture the Area"
+13. ✅ Match state is gated behind a `GameMode` enum — `MatchState` only runs when at least one player is in CTA
+14. ✅ **Mode persists until return-to-title** — Play Again stays in the same mode, no mode-switch at match end
 
 ---
 
