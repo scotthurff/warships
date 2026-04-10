@@ -248,6 +248,7 @@ dependencies = [
  "common",
  "console_error_panic_hook",
  "getrandom",
+ "gloo-timers 0.3.0",
  "instant",
  "itertools 0.10.5",
  "kodiak_client",

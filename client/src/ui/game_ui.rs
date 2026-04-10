@@ -3,6 +3,7 @@
 
 use crate::game::Mk48Game;
 use crate::ui::about_dialog::AboutDialog;
+use crate::ui::cta_respawn_overlay::CtaRespawnOverlay;
 use crate::ui::help_dialog::HelpDialog;
 use crate::ui::hint::Hint;
 use crate::ui::logo::logo;
@@ -91,15 +92,18 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     html! {
         <>
             if matches!(status, UiStatus::Playing(_) | UiStatus::Respawning(_)) && !nexus {
-                // Capture the Area HUD — timer + scores, top-middle.
+                // Capture the Area HUD — timer + scores + capture bars, top-middle.
                 // Only renders when the server is sending match updates
                 // (i.e., the player is in CTA mode).
                 if let Some(m) = props.match_update {
                     <Positioner id="match_hud" position={Position::TopMiddle{margin: "0.5rem"}}>
-                        <div style="display: flex; align-items: center; gap: 20px; padding: 10px 18px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 3px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 16px; font-weight: 700; letter-spacing: 2px; color: #E2E8F0; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
-                            <div style="color: #60A5FA;">{format!("BLUE {}", m.blue_score)}</div>
-                            <div style="color: #FCD34D;">{format_match_clock(&m)}</div>
-                            <div style="color: #F87171;">{format!("{} RED", m.red_score)}</div>
+                        <div style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 18px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 3px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-weight: 700; letter-spacing: 2px; color: #E2E8F0; box-shadow: 0 2px 8px rgba(0,0,0,0.5); min-width: 320px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 16px;">
+                                <div style="color: #60A5FA;">{format!("BLUE {}", m.blue_score)}</div>
+                                <div style="color: #FCD34D;">{format_match_clock(&m)}</div>
+                                <div style="color: #F87171;">{format!("{} RED", m.red_score)}</div>
+                            </div>
+                            { render_capture_bars(&m) }
                         </div>
                     </Positioner>
                 }
@@ -120,7 +124,13 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                         <TouchControls/>
                     }
                 } else if let UiStatus::Respawning(respawning) = status {
-                    <RespawnOverlay status={respawning} score={props.score}/>
+                    if props.match_update.is_some() {
+                        // Capture the Area: auto-respawn after 1.5s at team base,
+                        // no ship picker.
+                        <CtaRespawnOverlay ship={props.last_spawn_entity}/>
+                    } else {
+                        <RespawnOverlay status={respawning} score={props.score}/>
+                    }
                 }
             } else {
                 if let UiStatus::Spawning = status {
@@ -241,7 +251,6 @@ impl RoutableExt for Mk48Route {
 }
 
 /// Format the current match phase into a user-readable string.
-/// Phase 1 stub — a nicer HUD with countdown animation lands in Phase 2.
 fn format_match_clock(m: &MatchUpdate) -> String {
     use common::protocol::MatchPhase;
     match m.phase {
@@ -257,6 +266,52 @@ fn format_match_clock(m: &MatchUpdate) -> String {
             format!("{:02}:{:02}", min, sec)
         }
         MatchPhase::Ended { .. } => "ENDED".to_string(),
+    }
+}
+
+/// Render the two base capture progress bars. Returns empty Html when
+/// neither base is being contested.
+const CAPTURE_DURATION_MS: f32 = 30_000.0;
+
+fn render_capture_bars(m: &MatchUpdate) -> Html {
+    let blue_base_pct = (m.blue_base_capture_ms as f32 / CAPTURE_DURATION_MS).clamp(0.0, 1.0);
+    let red_base_pct = (m.red_base_capture_ms as f32 / CAPTURE_DURATION_MS).clamp(0.0, 1.0);
+
+    if blue_base_pct == 0.0 && red_base_pct == 0.0 {
+        return html! {};
+    }
+
+    html! {
+        <div style="display: flex; flex-direction: column; gap: 4px; font-size: 10px; letter-spacing: 1px;">
+            { render_bar("RED BASE", "Capturing", red_base_pct, m.red_base_capture_ms, "#60A5FA") }
+            { render_bar("BLUE BASE", "Under attack", blue_base_pct, m.blue_base_capture_ms, "#F87171") }
+        </div>
+    }
+}
+
+/// Render one capture progress bar. `label` = target base name,
+/// `status` = "Capturing" or "Under attack", `color` = fill color
+/// (invader's color).
+fn render_bar(label: &str, status: &str, pct: f32, ms: u32, color: &str) -> Html {
+    if pct == 0.0 {
+        return html! {};
+    }
+    let width_pct = format!("{:.0}%", pct * 100.0);
+    let bar_fill_style = format!(
+        "height: 6px; width: {}; background: {}; border-radius: 1px; transition: width 0.1s linear;",
+        width_pct, color
+    );
+    let seconds = ms / 1000;
+    html! {
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; justify-content: space-between; text-transform: uppercase; color: #94A3B8;">
+                <span>{format!("{} — {}", label, status)}</span>
+                <span>{format!("{}s / 30s", seconds)}</span>
+            </div>
+            <div style="height: 6px; background: rgba(148,163,184,0.2); border-radius: 1px; overflow: hidden;">
+                <div style={bar_fill_style}></div>
+            </div>
+        </div>
     }
 }
 
@@ -332,6 +387,9 @@ pub struct UiProps {
     pub touch_screen: bool,
     /// Latest Capture the Area match state. `None` in Free Roam.
     pub match_update: Option<MatchUpdate>,
+    /// Last ship the player picked on the title screen / ship menu.
+    /// Used by the Capture the Area auto-respawn overlay.
+    pub last_spawn_entity: Option<EntityType>,
 }
 
 /// Mutually exclusive statuses.
@@ -378,6 +436,7 @@ impl Mk48Game {
             joins: context.state.game.joins.clone(),
             touch_screen: context.mouse.touch_screen,
             match_update: context.state.game.match_update,
+            last_spawn_entity: self.last_spawn_entity,
         };
 
         context.set_ui_props(props, in_game);

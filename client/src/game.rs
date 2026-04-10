@@ -80,6 +80,10 @@ pub struct Mk48Game {
     /// FPS counter
     pub fps_counter: FpsMonitor,
     ui_state: UiState,
+    /// Remembers the last ship the player spawned as. Used to auto-
+    /// respawn them at their team base in Capture the Area mode without
+    /// re-prompting a ship picker. `None` before the first spawn.
+    pub last_spawn_entity: Option<EntityType>,
 }
 
 type FullLayer = ShadowLayer<Mk48Layer>;
@@ -211,6 +215,7 @@ impl GameClient for Mk48Game {
             fire_rate_limiter: FireRateLimiter::new(),
             fps_counter: FpsMonitor::new(1.0),
             ui_state: UiState::default(),
+            last_spawn_entity: None,
         })
     }
 
@@ -634,6 +639,73 @@ impl GameClient for Mk48Game {
             context.state.game.world_radius,
             area,
         );
+
+        // ─── Capture the Area world markers ─────────────────────────────
+        //
+        // When the client is in CTA mode (server sends match_update), draw
+        // the two home bases as translucent filled circles with an outer
+        // ring and a progress-ring overlay. Free Roam players see none of
+        // this. These constants mirror `server::match_state::ArenaLayout`.
+        if let Some(m) = context.state.game.match_update {
+            const BLUE_BASE: Vec2 = Vec2::new(0.0, 500.0);
+            const RED_BASE: Vec2 = Vec2::new(0.0, -500.0);
+            const BASE_RADIUS: f32 = 250.0;
+            const CAPTURE_DURATION_MS: f32 = 30_000.0;
+
+            let ring_thickness = 6.0;
+            let blue_color = rgba(96, 165, 250, 40); // fill
+            let blue_ring = rgba(96, 165, 250, 200); // outline
+            let red_color = rgba(248, 113, 113, 40);
+            let red_ring = rgba(248, 113, 113, 200);
+
+            // Filled fills + outer rings.
+            layer
+                .graphics
+                .draw_filled_circle(BLUE_BASE, BASE_RADIUS, blue_color);
+            layer
+                .graphics
+                .draw_circle(BLUE_BASE, BASE_RADIUS, ring_thickness, blue_ring);
+
+            layer
+                .graphics
+                .draw_filled_circle(RED_BASE, BASE_RADIUS, red_color);
+            layer
+                .graphics
+                .draw_circle(RED_BASE, BASE_RADIUS, ring_thickness, red_ring);
+
+            // Capture progress rings (drawn just outside the base outline).
+            // Blue base under attack → Red ring fills clockwise.
+            // Red base under attack → Blue ring fills clockwise.
+            let progress_radius = BASE_RADIUS + 14.0;
+            let progress_thickness = 8.0;
+
+            let blue_base_progress =
+                (m.blue_base_capture_ms as f32 / CAPTURE_DURATION_MS).clamp(0.0, 1.0);
+            if blue_base_progress > 0.0 {
+                // Sweep clockwise from the top (angle starts at PI/2).
+                let sweep = blue_base_progress * std::f32::consts::PI * 2.0;
+                layer.graphics.draw_arc(
+                    BLUE_BASE,
+                    progress_radius,
+                    (std::f32::consts::FRAC_PI_2)..(std::f32::consts::FRAC_PI_2 + sweep),
+                    progress_thickness,
+                    red_ring,
+                );
+            }
+
+            let red_base_progress =
+                (m.red_base_capture_ms as f32 / CAPTURE_DURATION_MS).clamp(0.0, 1.0);
+            if red_base_progress > 0.0 {
+                let sweep = red_base_progress * std::f32::consts::PI * 2.0;
+                layer.graphics.draw_arc(
+                    RED_BASE,
+                    progress_radius,
+                    (std::f32::consts::FRAC_PI_2)..(std::f32::consts::FRAC_PI_2 + sweep),
+                    progress_thickness,
+                    blue_ring,
+                );
+            }
+        }
 
         let mut anti_aircraft_volume = 0.0;
 
@@ -1695,6 +1767,7 @@ impl GameClient for Mk48Game {
                 self.ui_state.armament = armament;
             }
             UiEvent::Respawn(entity_type) => {
+                self.last_spawn_entity = Some(entity_type);
                 context.send_to_game(Command::Spawn(Spawn {
                     alias: None,
                     entity_type,
@@ -1705,6 +1778,7 @@ impl GameClient for Mk48Game {
                 entity_type,
                 game_mode,
             } => {
+                self.last_spawn_entity = Some(entity_type);
                 // Send the mode selection first so the server stamps the
                 // player with the correct game_mode before the Spawn arrives.
                 // In Free Roam this is a no-op on the server (default), but

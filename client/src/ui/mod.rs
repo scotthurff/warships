@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 pub(crate) mod about_dialog;
+pub(crate) mod cta_respawn_overlay;
 pub(crate) mod game_ui;
 pub(crate) mod help_dialog;
 pub(crate) mod hint;

@@ -18,6 +18,7 @@ bytemuck = "1.9"
 common = { path = "../common", features = [ "js" ] }
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.2", features = [ "js" ] }
+gloo-timers = { version = "0.3", features = [ "futures" ] }
 instant = { version = "0.1.10", features = [ "wasm-bindgen" ] }
 itertools = "0.10"
 kodiak_client = { features = [ "audio", "music", "high_contrast_setting", "renderer_srgb", "renderer_webgl2", "renderer2d", "renderer3d_shadow" ], path = "../../warships-kodiak/client" }
