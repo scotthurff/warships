@@ -646,7 +646,7 @@ impl GameClient for Mk48Game {
         // the two home bases as translucent filled circles with an outer
         // ring and a progress-ring overlay. Free Roam players see none of
         // this. These constants mirror `server::match_state::ArenaLayout`.
-        if let Some(m) = context.state.game.match_update {
+        if let Some(m) = context.state.game.match_update.as_ref() {
             const BLUE_BASE: Vec2 = Vec2::new(0.0, 500.0);
             const RED_BASE: Vec2 = Vec2::new(0.0, -500.0);
             const BASE_RADIUS: f32 = 250.0;

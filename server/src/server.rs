@@ -13,7 +13,9 @@ use common::entity::EntityData;
 use common::entity::EntityType;
 use common::protocol::TeamDto;
 use common::protocol::TeamUpdate;
-use common::protocol::{Command, GameMode, MatchPhase, MatchUpdate, Update};
+use common::protocol::{
+    Command, GameMode, MatchPhase, MatchUpdate, PlayerMatchStatsDto, Update,
+};
 use common::terrain::ChunkSet;
 use common::ticks::Ticks;
 use common::util::level_to_score;
@@ -356,6 +358,29 @@ impl ArenaService for Server {
             let is_cta =
                 player_tuple.borrow_player().game_mode == GameMode::CaptureTheArea;
             if is_cta {
+                // Build the per-player stats DTO for every CTA participant.
+                // Only team-assigned players show up (humans + assigned bots),
+                // so the scoreboard never lists spectators.
+                let my_player_id = player_tuple.borrow_player().player_id;
+                let mut players: Vec<PlayerMatchStatsDto> = self
+                    .player
+                    .iter_borrow()
+                    .filter_map(|p| {
+                        let team = p.match_team?;
+                        Some(PlayerMatchStatsDto {
+                            alias: p.alias,
+                            team,
+                            ship: p.match_stats.ship_class,
+                            kills: p.match_stats.kills,
+                            captures: p.match_stats.captures,
+                            personal_points: p.match_stats.personal_points,
+                            is_you: p.player_id == my_player_id,
+                        })
+                    })
+                    .collect();
+                // Sort by personal_points desc so the client doesn't have to.
+                players.sort_by(|a, b| b.personal_points.cmp(&a.personal_points));
+
                 let m = &self.match_state;
                 Some(MatchUpdate {
                     match_id: m.match_id,
@@ -365,6 +390,7 @@ impl ArenaService for Server {
                     red_score: m.red_score,
                     blue_base_capture_ms: m.blue_base_capture.as_millis() as u32,
                     red_base_capture_ms: m.red_base_capture.as_millis() as u32,
+                    players,
                 })
             } else {
                 None

@@ -85,7 +85,7 @@ pub enum MatchPhase {
 
 /// Per-tick match state broadcast to clients during Capture the Area.
 /// Sent at ~2 Hz during `Playing`. Not sent in Free Roam.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct MatchUpdate {
     /// Epoch — bumps on every `reset()`. Clients discard stale packets.
     pub match_id: u32,
@@ -98,6 +98,24 @@ pub struct MatchUpdate {
     pub blue_base_capture_ms: u32,
     /// Progress (ms) toward Blue capturing the Red base.
     pub red_base_capture_ms: u32,
+    /// Per-player stats for the current match. Populated by the server
+    /// on every MatchUpdate (small — at most 10 entries for 5v5). Used
+    /// by the end-of-match results screen to show a sorted table.
+    pub players: Vec<PlayerMatchStatsDto>,
+}
+
+/// Per-player stats DTO broadcast inside `MatchUpdate.players`.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct PlayerMatchStatsDto {
+    pub alias: PlayerAlias,
+    pub team: MatchTeam,
+    pub ship: Option<EntityType>,
+    pub kills: u32,
+    pub captures: u32,
+    pub personal_points: u32,
+    /// `true` if this DTO represents the local human player (not a bot).
+    /// Lets the client highlight their own row.
+    pub is_you: bool,
 }
 
 /// Updates for terrain chunks.

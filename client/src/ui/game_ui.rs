@@ -3,12 +3,14 @@
 
 use crate::game::Mk48Game;
 use crate::ui::about_dialog::AboutDialog;
+use crate::ui::countdown_overlay::CountdownOverlay;
 use crate::ui::cta_respawn_overlay::CtaRespawnOverlay;
 use crate::ui::help_dialog::HelpDialog;
 use crate::ui::hint::Hint;
 use crate::ui::logo::logo;
 use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
+use crate::ui::ship_menu::ShipMenu;
 use crate::ui::ships_dialog::ShipsDialog;
 use crate::ui::status_overlay::StatusOverlay;
 use crate::ui::touch_controls::TouchControls;
@@ -42,11 +44,18 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // Persists across re-renders of this component.
     let selected_mode = use_state(|| GameMode::FreeRoam);
 
+    // Currently-selected ship on the title screen. In Free Roam we ignore
+    // this and always spawn as G5 (the existing behavior). In Capture the
+    // Area the player picks a ship and that picks propagates into the
+    // `Spawn` command.
+    let selected_ship = use_state::<Option<EntityType>, _>(|| None);
+
     let on_play = {
         let mode = *selected_mode;
+        let selected_ship = selected_ship.clone();
         gctw.send_ui_event_callback.reform(move |alias| UiEvent::Spawn {
             alias,
-            entity_type: EntityType::G5,
+            entity_type: selected_ship.unwrap_or(EntityType::G5),
             game_mode: mode,
         })
     };
@@ -58,6 +67,10 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let on_select_cta = {
         let selected_mode = selected_mode.clone();
         Callback::from(move |_: MouseEvent| selected_mode.set(GameMode::CaptureTheArea))
+    };
+    let on_ship_pick = {
+        let selected_ship = selected_ship.clone();
+        Callback::from(move |entity_type: EntityType| selected_ship.set(Some(entity_type)))
     };
 
     let margin = "0.5rem";
@@ -89,21 +102,36 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         (SHOOT_HINT, &["how", "fire"])
     ];
 
+    // Countdown overlay lives outside the Playing / Spawning branches
+    // because the server transitions the match into Countdown immediately
+    // on CTA start — the client may still be in the Spawning status while
+    // the countdown is already running.
+    let countdown_html = if let Some(m) = props.match_update.as_ref() {
+        if m.phase == common::protocol::MatchPhase::Countdown {
+            html! { <CountdownOverlay match_update={m.clone()} /> }
+        } else {
+            html! {}
+        }
+    } else {
+        html! {}
+    };
+
     html! {
         <>
+            { countdown_html }
             if matches!(status, UiStatus::Playing(_) | UiStatus::Respawning(_)) && !nexus {
                 // Capture the Area HUD — timer + scores + capture bars, top-middle.
                 // Only renders when the server is sending match updates
                 // (i.e., the player is in CTA mode).
-                if let Some(m) = props.match_update {
+                if let Some(m) = props.match_update.as_ref() {
                     <Positioner id="match_hud" position={Position::TopMiddle{margin: "0.5rem"}}>
                         <div style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 18px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 3px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-weight: 700; letter-spacing: 2px; color: #E2E8F0; box-shadow: 0 2px 8px rgba(0,0,0,0.5); min-width: 320px;">
                             <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 16px;">
                                 <div style="color: #60A5FA;">{format!("BLUE {}", m.blue_score)}</div>
-                                <div style="color: #FCD34D;">{format_match_clock(&m)}</div>
+                                <div style="color: #FCD34D;">{format_match_clock(m)}</div>
                                 <div style="color: #F87171;">{format!("{} RED", m.red_score)}</div>
                             </div>
-                            { render_capture_bars(&m) }
+                            { render_capture_bars(m) }
                         </div>
                     </Positioner>
                 }
@@ -154,6 +182,24 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                                     <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"5v5 timed match"}</div>
                                 </div>
                             </div>
+                            // Ship picker — only shown for Capture the Area. All ships
+                            // unlocked via u32::MAX score. Pick flows into on_play.
+                            if *selected_mode == GameMode::CaptureTheArea {
+                                <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                                    <div style="font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #94A3B8;">
+                                        if selected_ship.is_some() {
+                                            {"Ship selected — ready when you are"}
+                                        } else {
+                                            {"Select your ship"}
+                                        }
+                                    </div>
+                                    <ShipMenu
+                                        score={u32::MAX}
+                                        onclick={on_ship_pick}
+                                        closable={false}
+                                    />
+                                </div>
+                            }
                             // Difficulty selector — wargame style
                             <div style="display: flex; gap: 10px;">
                                 <button
@@ -441,7 +487,7 @@ impl Mk48Game {
             joiners: context.state.game.joiners.clone(),
             joins: context.state.game.joins.clone(),
             touch_screen: context.mouse.touch_screen,
-            match_update: context.state.game.match_update,
+            match_update: context.state.game.match_update.clone(),
             last_spawn_entity: self.last_spawn_entity,
         };
 
