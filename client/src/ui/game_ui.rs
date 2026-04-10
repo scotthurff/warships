@@ -114,11 +114,17 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                             fps={gctw.settings_cache.fps_shown.then_some(props.fps)}
                         />
                     </Positioner>
-                    <UpgradeOverlay
-                        position={Position::TopMiddle{margin}}
-                        status={playing.clone()}
-                        score={props.score}
-                    />
+                    // Hide the level-progress / upgrade overlay during
+                    // Capture the Area — ships are fixed per match so
+                    // there's no meaningful progression, and it clashes
+                    // with the match HUD which lives in the same slot.
+                    if props.match_update.is_none() {
+                        <UpgradeOverlay
+                            position={Position::TopMiddle{margin}}
+                            status={playing.clone()}
+                            score={props.score}
+                        />
+                    }
                     <Hint entity_type={playing.entity_type}/>
                     if props.touch_screen {
                         <TouchControls/>

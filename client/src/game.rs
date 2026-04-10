@@ -679,15 +679,18 @@ impl GameClient for Mk48Game {
             let progress_radius = BASE_RADIUS + 14.0;
             let progress_thickness = 8.0;
 
+            // Sweep CLOCKWISE from 12 o'clock. In math convention angles
+            // grow counterclockwise, so to draw clockwise we start at
+            // (PI/2 - sweep) and end at (PI/2). The arc then visually
+            // starts at 12 and grows through 1, 2, 3... as sweep grows.
             let blue_base_progress =
                 (m.blue_base_capture_ms as f32 / CAPTURE_DURATION_MS).clamp(0.0, 1.0);
             if blue_base_progress > 0.0 {
-                // Sweep clockwise from the top (angle starts at PI/2).
                 let sweep = blue_base_progress * std::f32::consts::PI * 2.0;
                 layer.graphics.draw_arc(
                     BLUE_BASE,
                     progress_radius,
-                    (std::f32::consts::FRAC_PI_2)..(std::f32::consts::FRAC_PI_2 + sweep),
+                    (std::f32::consts::FRAC_PI_2 - sweep)..std::f32::consts::FRAC_PI_2,
                     progress_thickness,
                     red_ring,
                 );
@@ -700,7 +703,7 @@ impl GameClient for Mk48Game {
                 layer.graphics.draw_arc(
                     RED_BASE,
                     progress_radius,
-                    (std::f32::consts::FRAC_PI_2)..(std::f32::consts::FRAC_PI_2 + sweep),
+                    (std::f32::consts::FRAC_PI_2 - sweep)..std::f32::consts::FRAC_PI_2,
                     progress_thickness,
                     blue_ring,
                 );
