@@ -3,7 +3,7 @@
 
 use crate::bot::*;
 use crate::entity_extension::EntityExtension;
-use crate::match_state::{BoatSnapshot, MatchEvent, MatchState};
+use crate::match_state::{BoatSnapshot, MatchEvent, MatchState, Team};
 use crate::player::*;
 use crate::protocol::*;
 use crate::team::TeamRepo;
@@ -43,6 +43,84 @@ pub struct Server {
     /// player is in `GameMode::CaptureTheArea`. Players in Free Roam are
     /// unaffected.
     pub match_state: MatchState,
+}
+
+impl Server {
+    /// Assign Blue/Red teams to every player at match start.
+    ///
+    /// Humans (in CTA mode) always go Blue. Bots fill the remaining
+    /// Blue slots up to 4, then the Red slots up to 5. Extra bots beyond
+    /// 10 total get slotted onto whichever team is lighter.
+    fn assign_match_teams(&mut self) {
+        // Humans first — they're always Blue, regardless of join order.
+        for mut player in self.player.iter_borrow_mut() {
+            if !player.is_bot() && player.game_mode == GameMode::CaptureTheArea {
+                player.match_team = Some(Team::Blue);
+            }
+        }
+
+        let (mut blue, mut red) = self.count_teams();
+        const BLUE_MAX: u32 = 5;
+        const RED_MAX: u32 = 5;
+
+        for mut player in self.player.iter_borrow_mut() {
+            if !player.is_bot() {
+                continue;
+            }
+            if player.match_team.is_some() {
+                continue;
+            }
+            let team = if blue < BLUE_MAX && blue <= red {
+                blue += 1;
+                Team::Blue
+            } else if red < RED_MAX {
+                red += 1;
+                Team::Red
+            } else {
+                // Both sides full — slot onto whichever is smaller.
+                if blue <= red {
+                    blue += 1;
+                    Team::Blue
+                } else {
+                    red += 1;
+                    Team::Red
+                }
+            };
+            player.match_team = Some(team);
+        }
+    }
+
+    /// Assign any bots that joined after `assign_match_teams` was called
+    /// to whichever side is currently lighter (Red on tie).
+    fn assign_late_joiners(&mut self) {
+        let (mut blue, mut red) = self.count_teams();
+        for mut player in self.player.iter_borrow_mut() {
+            if !player.is_bot() || player.match_team.is_some() {
+                continue;
+            }
+            if blue < red {
+                player.match_team = Some(Team::Blue);
+                blue += 1;
+            } else {
+                player.match_team = Some(Team::Red);
+                red += 1;
+            }
+        }
+    }
+
+    /// Count current (Blue, Red) team sizes across all players.
+    fn count_teams(&self) -> (u32, u32) {
+        let mut blue = 0u32;
+        let mut red = 0u32;
+        for player in self.player.iter_borrow() {
+            match player.match_team {
+                Some(Team::Blue) => blue += 1,
+                Some(Team::Red) => red += 1,
+                None => {}
+            }
+        }
+        (blue, red)
+    }
 }
 
 /// Stores a player, and metadata related to it. Data stored here may only be accessed when processing,
@@ -288,16 +366,22 @@ impl ArenaService for Server {
             .any(|p| p.game_mode == GameMode::CaptureTheArea);
 
         if any_cta_player {
-            // First CTA player arrived? Kick the match off.
+            // First CTA player arrived? Kick the match off and assign
+            // teams to every player (human = Blue, bots split 4B/5R).
             if matches!(
                 self.match_state.phase,
                 MatchPhase::Waiting | MatchPhase::Ended { .. }
             ) {
                 self.match_state.start_match();
+                self.assign_match_teams();
                 info!(
                     "match {} started (Capture the Area)",
                     self.match_state.match_id
                 );
+            } else {
+                // Mid-match: any newly-joined bot without a team gets
+                // slotted onto whichever side has fewer ships (Red on tie).
+                self.assign_late_joiners();
             }
 
             // Phase 1: empty boat snapshots — capture mechanics land in
