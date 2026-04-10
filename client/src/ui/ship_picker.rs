@@ -63,28 +63,30 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
 
     let has_selection = props.selected.is_some();
 
-    // Container — wargame panel frame.
+    // Container — wargame panel frame. Sized generously so the ship
+    // grid gets at least 4 columns on a typical desktop and the detail
+    // panel has room for stats.
     html! {
-        <div style="display: flex; flex-direction: column; align-items: stretch; gap: 20px; padding: 32px 40px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 4px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; box-shadow: 0 8px 32px rgba(0,0,0,0.6); min-width: 720px; max-width: 90vw;">
+        <div style="display: flex; flex-direction: column; align-items: stretch; gap: 24px; padding: 36px 48px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 4px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; box-shadow: 0 8px 32px rgba(0,0,0,0.6); min-width: 1040px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
 
             // Header row: back button + title
             <div style="display: flex; align-items: center; justify-content: space-between;">
                 <button
-                    style="display: flex; align-items: center; min-width: 100px; height: 40px; padding: 0 18px; background: rgba(15,23,42,0.92); color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer;"
+                    style="display: flex; align-items: center; min-width: 120px; height: 44px; padding: 0 20px; background: rgba(15,23,42,0.92); color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer;"
                     onclick={props.on_back.clone()}
                 >
                     {"< Back"}
                 </button>
-                <div style="color: #FCD34D; font-size: 20px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-shadow: 0 2px 6px rgba(0,0,0,0.6);">
+                <div style="color: #FCD34D; font-size: 26px; font-weight: 700; letter-spacing: 5px; text-transform: uppercase; text-shadow: 0 2px 6px rgba(0,0,0,0.6);">
                     {"Select Your Ship"}
                 </div>
-                <div style="min-width: 100px;"></div> // spacer to balance the Back button
+                <div style="min-width: 120px;"></div> // spacer to balance the Back button
             </div>
 
             // Level nav: < Level N >
-            <div style="display: flex; align-items: center; justify-content: center; gap: 16px; padding: 8px 0; border-top: 1px solid rgba(148,163,184,0.15); border-bottom: 1px solid rgba(148,163,184,0.15);">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 20px; padding: 10px 0; border-top: 1px solid rgba(148,163,184,0.15); border-bottom: 1px solid rgba(148,163,184,0.15);">
                 <button
-                    style={format!("width: 40px; height: 40px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 18px; font-weight: 700; cursor: {};",
+                    style={format!("width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: {};",
                         if *level == 1 { "#475569" } else { "#4ADE80" },
                         if *level == 1 { "not-allowed" } else { "pointer" })}
                     onclick={on_prev}
@@ -92,11 +94,11 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
                 >
                     {"<"}
                 </button>
-                <div style="color: #E2E8F0; font-size: 16px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; min-width: 140px; text-align: center;">
+                <div style="color: #E2E8F0; font-size: 18px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; min-width: 180px; text-align: center;">
                     {format!("Level {} / {}", *level, max_level)}
                 </div>
                 <button
-                    style={format!("width: 40px; height: 40px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 18px; font-weight: 700; cursor: {};",
+                    style={format!("width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: {};",
                         if *level == max_level { "#475569" } else { "#4ADE80" },
                         if *level == max_level { "not-allowed" } else { "pointer" })}
                     onclick={on_next}
@@ -106,12 +108,12 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
                 </button>
             </div>
 
-            // Ship grid
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; min-height: 200px;">
+            // Ship grid — larger cards, more visible per row
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; min-height: 260px;">
                 {
                     if ships.is_empty() {
                         html! {
-                            <div style="grid-column: 1 / -1; color: #64748B; font-size: 12px; text-align: center; padding: 48px 0;">
+                            <div style="grid-column: 1 / -1; color: #64748B; font-size: 13px; text-align: center; padding: 64px 0;">
                                 {"(no ships at this level)"}
                             </div>
                         }
@@ -135,7 +137,7 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
             <div style="display: flex; justify-content: center;">
                 <button
                     style={format!(
-                        "display: flex; align-items: center; justify-content: center; min-width: 220px; height: 56px; padding: 0 40px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid {}; border-left: 3px solid {}; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 18px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; cursor: {}; box-shadow: 0 2px 8px rgba(0,0,0,0.5);",
+                        "display: flex; align-items: center; justify-content: center; min-width: 260px; height: 60px; padding: 0 48px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid {}; border-left: 3px solid {}; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 20px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; cursor: {}; box-shadow: 0 2px 8px rgba(0,0,0,0.5);",
                         if has_selection { "#4ADE80" } else { "#475569" },
                         if has_selection { "rgba(34,197,94,0.4)" } else { "rgba(71,85,105,0.3)" },
                         if has_selection { "#22C55E" } else { "#475569" },
@@ -152,9 +154,9 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
 
 fn render_ship_card(ship: EntityType, selected: bool, on_click: Callback<MouseEvent>) -> Html {
     let card_style = if selected {
-        "display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: rgba(74,222,128,0.12); border: 2px solid #22C55E; border-radius: 2px; cursor: pointer; transition: all 0.15s ease-out;"
+        "display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 12px; min-height: 180px; background: rgba(74,222,128,0.12); border: 2px solid #22C55E; border-radius: 2px; cursor: pointer; transition: all 0.15s ease-out;"
     } else {
-        "display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.2); border-radius: 2px; cursor: pointer; transition: all 0.15s ease-out;"
+        "display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 12px; min-height: 180px; background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.2); border-radius: 2px; cursor: pointer; transition: all 0.15s ease-out;"
     };
     let label_color = if selected { "#4ADE80" } else { "#E2E8F0" };
     let class_color = if selected { "#4ADE80" } else { "#94A3B8" };
@@ -162,14 +164,18 @@ fn render_ship_card(ship: EntityType, selected: bool, on_click: Callback<MouseEv
 
     html! {
         <div style={card_style} onclick={on_click}>
-            <div style="zoom: 0.55;">
+            // Larger sprite zoom — was 0.55, now 0.75 for a more legible
+            // silhouette in the picker.
+            <div style="display: flex; align-items: center; justify-content: center; flex: 1; zoom: 0.75;">
                 <Sprite entity_type={ship}/>
             </div>
-            <div style={format!("color: {}; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; text-align: center;", label_color)}>
-                {data.label}
-            </div>
-            <div style={format!("color: {}; font-size: 9px; font-weight: 400; letter-spacing: 0.5px; text-transform: uppercase;", class_color)}>
-                {subkind_label(data.sub_kind)}
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                <div style={format!("color: {}; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; text-align: center;", label_color)}>
+                    {data.label}
+                </div>
+                <div style={format!("color: {}; font-size: 10px; font-weight: 400; letter-spacing: 0.5px; text-transform: uppercase;", class_color)}>
+                    {subkind_label(data.sub_kind)}
+                </div>
             </div>
         </div>
     }
@@ -178,31 +184,47 @@ fn render_ship_card(ship: EntityType, selected: bool, on_click: Callback<MouseEv
 fn render_detail_panel(selected: Option<EntityType>) -> Html {
     match selected {
         None => html! {
-            <div style="display: flex; align-items: center; justify-content: center; min-height: 80px; padding: 18px; background: rgba(15,23,42,0.5); border: 1px dashed rgba(148,163,184,0.3); border-radius: 2px; color: #64748B; font-size: 12px; letter-spacing: 2px; text-transform: uppercase;">
+            <div style="display: flex; align-items: center; justify-content: center; min-height: 160px; padding: 24px; background: rgba(15,23,42,0.5); border: 1px dashed rgba(148,163,184,0.3); border-radius: 2px; color: #64748B; font-size: 14px; letter-spacing: 3px; text-transform: uppercase;">
                 {"Tap a ship to see its stats"}
             </div>
         },
         Some(ship) => {
             let data = ship.data();
-            let speed_knots = data.speed.to_knots();
-            let armament_count = data.armaments.len();
+            let stats = ShipStats::from_data(data);
+
             html! {
-                <div style="display: grid; grid-template-columns: 2fr 3fr; gap: 20px; padding: 18px 20px; background: rgba(15,23,42,0.5); border: 1px solid rgba(74,222,128,0.3); border-left: 3px solid #4ADE80; border-radius: 2px;">
-                    // Left column: name + class
-                    <div style="display: flex; flex-direction: column; gap: 4px;">
-                        <div style="color: #FCD34D; font-size: 18px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;">
-                            {data.label}
+                <div style="display: grid; grid-template-columns: minmax(260px, 2fr) 5fr; gap: 28px; padding: 24px 28px; background: rgba(15,23,42,0.55); border: 1px solid rgba(74,222,128,0.3); border-left: 3px solid #4ADE80; border-radius: 2px;">
+                    // Left column: name + class + big sprite
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <div>
+                            <div style="color: #FCD34D; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
+                                {data.label}
+                            </div>
+                            <div style="margin-top: 4px; color: #94A3B8; font-size: 12px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase;">
+                                {format!("Level {} {}", data.level, subkind_label(data.sub_kind))}
+                            </div>
                         </div>
-                        <div style="color: #94A3B8; font-size: 11px; font-weight: 400; letter-spacing: 1px; text-transform: uppercase;">
-                            {format!("Level {} {}", data.level, subkind_label(data.sub_kind))}
+                        <div style="display: flex; align-items: center; justify-content: center; padding: 8px; background: rgba(15,23,42,0.35); border-radius: 2px; min-height: 100px; zoom: 0.9;">
+                            <Sprite entity_type={ship}/>
                         </div>
                     </div>
-                    // Right column: stats
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; align-items: start;">
-                        { render_stat("Speed", &format!("{:.0} kn", speed_knots)) }
-                        { render_stat("Length", &format!("{:.0} m", data.length)) }
-                        { render_stat("Armaments", &format!("{}", armament_count)) }
-                        { render_stat("Class", subkind_label(data.sub_kind)) }
+                    // Right column: stat grid (3 columns × up to 4 rows)
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 28px; align-content: start;">
+                        { render_stat("Speed",      &format!("{:.0} kn", stats.speed_knots)) }
+                        { render_stat("Health",     &format!("{:.0}", stats.health)) }
+                        { render_stat("Length",     &format!("{:.0} m", stats.length_m)) }
+
+                        { render_stat("Turrets",    &format!("{}", stats.turret_count)) }
+                        { render_stat("Weapons",    &format!("{}", stats.armament_count)) }
+                        { render_stat("Range",      &format!("{:.0} m", stats.range_m)) }
+
+                        { render_stat("Guns",       &format!("{}", stats.guns)) }
+                        { render_stat("Torpedoes",  &format!("{}", stats.torpedoes)) }
+                        { render_stat("Missiles",   &format!("{}", stats.missiles)) }
+
+                        { render_stat("Aircraft",   &format!("{}", stats.aircraft)) }
+                        { render_stat("Mines",      &format!("{}", stats.mines)) }
+                        { render_stat("Vision",     &format!("{:.0} m", stats.vision_m)) }
                     </div>
                 </div>
             }
@@ -210,9 +232,65 @@ fn render_detail_panel(selected: Option<EntityType>) -> Html {
     }
 }
 
+/// Rolled-up stat snapshot for the detail panel. Keeps the render
+/// function readable and gives us a single place to tweak how each
+/// number is derived from EntityData.
+struct ShipStats {
+    speed_knots: f32,
+    length_m: f32,
+    health: f32,
+    turret_count: usize,
+    armament_count: usize,
+    range_m: f32,
+    vision_m: f32,
+    guns: usize,
+    torpedoes: usize,
+    missiles: usize,
+    aircraft: usize,
+    mines: usize,
+}
+
+impl ShipStats {
+    fn from_data(data: &'static EntityData) -> Self {
+        use EntitySubKind::*;
+
+        let mut guns = 0usize;
+        let mut torpedoes = 0usize;
+        let mut missiles = 0usize;
+        let mut aircraft = 0usize;
+        let mut mines = 0usize;
+
+        for armament in data.armaments {
+            match armament.entity_type.data().sub_kind {
+                Shell | Gun => guns += 1,
+                Torpedo => torpedoes += 1,
+                Missile | Rocket | RocketTorpedo | Sam => missiles += 1,
+                Plane | Heli => aircraft += 1,
+                Mine | DepthCharge => mines += 1,
+                _ => {}
+            }
+        }
+
+        Self {
+            speed_knots: data.speed.to_knots(),
+            length_m: data.length,
+            health: data.damage,
+            turret_count: data.turrets.len(),
+            armament_count: data.armaments.len(),
+            range_m: data.range,
+            vision_m: data.sensors.visual.range,
+            guns,
+            torpedoes,
+            missiles,
+            aircraft,
+            mines,
+        }
+    }
+}
+
 fn render_stat(label: &str, value: &str) -> Html {
     html! {
-        <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 11px; letter-spacing: 1px;">
+        <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 12px; letter-spacing: 1px; padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,0.08);">
             <span style="color: #64748B; text-transform: uppercase;">{label}</span>
             <span style="color: #E2E8F0; font-weight: 700; text-align: right;">{value}</span>
         </div>
