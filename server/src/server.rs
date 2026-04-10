@@ -482,6 +482,7 @@ impl ArenaService for Server {
                     .filter_map(|p| {
                         let team = p.match_team?;
                         Some(PlayerMatchStatsDto {
+                            player_id: p.player_id,
                             alias: p.alias,
                             team,
                             ship: p.match_stats.ship_class,

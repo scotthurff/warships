@@ -107,6 +107,9 @@ pub struct MatchUpdate {
 /// Per-player stats DTO broadcast inside `MatchUpdate.players`.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct PlayerMatchStatsDto {
+    /// Player id — lets the client map from `Contact.player_id()` to team
+    /// for ship coloring, minimap markers, etc.
+    pub player_id: PlayerId,
     pub alias: PlayerAlias,
     pub team: MatchTeam,
     pub ship: Option<EntityType>,

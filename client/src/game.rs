@@ -734,11 +734,51 @@ impl GameClient for Mk48Game {
         // Update trails.
         layer.trails.set_time(context.client.time_seconds);
 
+        // For Capture the Area coloring: figure out the local player's
+        // team once per frame. Every contact is then looked up against
+        // match_update.players by player_id to decide if it's friendly
+        // (own team), hostile (enemy team), or unknown (e.g. weapons,
+        // crates — fall back to the mk48 default logic).
+        let cta_my_team: Option<common::protocol::MatchTeam> =
+            if let Some(m) = context.state.game.match_update.as_ref() {
+                m.players.iter().find(|p| p.is_you).map(|p| p.team)
+            } else {
+                None
+            };
+
         for InterpolatedContact { view: contact, .. } in context.state.game.contacts.values() {
-            let friendly = context.state.core.is_friendly(contact.player_id());
+            // Try the CTA team lookup first. If the match is active and
+            // this contact belongs to a player we know about, color by
+            // team rather than mk48's default is_friendly (which doesn't
+            // know anything about Blue/Red).
+            let cta_contact_team: Option<common::protocol::MatchTeam> =
+                if let (Some(m), Some(pid)) = (
+                    context.state.game.match_update.as_ref(),
+                    contact.player_id(),
+                ) {
+                    m.players
+                        .iter()
+                        .find(|p| p.player_id == pid)
+                        .map(|p| p.team)
+                } else {
+                    None
+                };
+
+            let friendly = if let (Some(mine), Some(theirs)) =
+                (cta_my_team, cta_contact_team)
+            {
+                mine == theirs
+            } else {
+                context.state.core.is_friendly(contact.player_id())
+            };
 
             let color_bytes = if friendly {
+                // Own team ships → bright green (friendly).
                 [58, 255, 140]
+            } else if cta_my_team.is_some() && contact.is_boat() && cta_contact_team.is_some() {
+                // CTA enemy team ship — paint red so it's unmistakable,
+                // overriding mk48's default white-for-unknown-boat.
+                [248, 113, 113]
             } else if contact.is_boat() {
                 [255; 3]
             } else {

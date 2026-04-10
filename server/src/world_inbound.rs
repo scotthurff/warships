@@ -66,7 +66,15 @@ impl CommandTrait for Spawn {
         drop(player);
         let player = player_tuple.borrow_player();
 
-        if !self.entity_type.can_spawn_as(player.score, true) {
+        // In Capture the Area the player has already picked a specific
+        // ship on the title screen (or the bot was assigned one from the
+        // fleet composition). Both come from a score-less context, so
+        // mk48's score-gated can_spawn_as check rejects them and traps
+        // the player in a respawn loop. Bypass the check when the player
+        // has a match_team — CTA ships are explicitly chosen, not earned.
+        if player.match_team.is_none()
+            && !self.entity_type.can_spawn_as(player.score, true)
+        {
             return Err("cannot spawn as given entity type");
         }
 
@@ -240,9 +248,25 @@ impl CommandTrait for Spawn {
         boat.transform.position = spawn_position;
         boat.transform.direction = desired_direction;
         boat.guidance.direction_target = desired_direction;
+        // In CTA, cap the retry wander radius so ships don't end up
+        // halfway across the arena when the base center is blocked by
+        // terrain. 500 units lets the retry loop try positions within
+        // a modest ring around the base (base_radius=250, so anywhere
+        // up to 2x that).
+        let max_distance_override = if cta_team.is_some() {
+            Some(500.0)
+        } else {
+            None
+        };
         //#[cfg(debug_assertions)]
         //let begin = std::time::Instant::now();
-        if world.spawn_here_or_nearby(boat, spawn_radius, exclusion_zone, true) {
+        if world.spawn_here_or_nearby(
+            boat,
+            spawn_radius,
+            exclusion_zone,
+            true,
+            max_distance_override,
+        ) {
             /*
             #[cfg(debug_assertions)]
             println!(
@@ -460,7 +484,7 @@ impl CommandTrait for Fire {
                 };
                 armament_entity.transform.direction += thread_rng().gen::<Angle>() * deviation;
 
-                if !world.spawn_here_or_nearby(armament_entity, 0.0, None, false) {
+                if !world.spawn_here_or_nearby(armament_entity, 0.0, None, false, None) {
                     return Err("failed to fire from current location");
                 }
             }
@@ -522,7 +546,7 @@ impl CommandTrait for Pay {
             payment.altitude = entity.altitude;
 
             // If payment successfully spawns, withdraw funds.
-            if world.spawn_here_or_nearby(payment, 1.0, None, false) {
+            if world.spawn_here_or_nearby(payment, 1.0, None, false, None) {
                 player.score -= withdraw;
             }
 

@@ -42,6 +42,7 @@ impl World {
         initial_radius: f32,
         exclusion_zone: Option<Vec2>,
         preserve_direction: bool,
+        max_distance_override: Option<f32>,
     ) -> bool {
         let retry = initial_radius > 0.0;
         let is_bot = entity.is_boat() && { entity.borrow_player().player_id.is_bot() };
@@ -64,8 +65,9 @@ impl World {
             };
 
             let mut governor = max_attempts;
-            let max_distance_from_center =
-                (self.radius * 0.9 - entity.data().radius * 1.5).max(self.radius * 0.5);
+            let max_distance_from_center = max_distance_override.unwrap_or_else(|| {
+                (self.radius * 0.9 - entity.data().radius * 1.5).max(self.radius * 0.5)
+            });
 
             // Always randomize on first iteration
             while entity.transform.position == center

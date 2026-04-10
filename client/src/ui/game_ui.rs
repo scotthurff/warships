@@ -9,6 +9,7 @@ use crate::ui::help_dialog::HelpDialog;
 use crate::ui::hint::Hint;
 use crate::ui::logo::logo;
 use crate::ui::match_end_overlay::MatchEndOverlay;
+use crate::ui::minimap::{Minimap, MinimapEntry};
 use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
 use crate::ui::ship_picker::ShipPicker;
@@ -176,10 +177,24 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         html! {}
     };
 
+    // Minimap: rendered whenever the match is active, regardless of
+    // Playing vs Respawning vs Spawning status. Disappears on
+    // `MatchPhase::Ended` since the results screen takes over.
+    let minimap_html = if let Some(m) = props.match_update.as_ref() {
+        if !matches!(m.phase, common::protocol::MatchPhase::Ended { .. }) {
+            html! { <Minimap entries={props.minimap_entries.clone()} /> }
+        } else {
+            html! {}
+        }
+    } else {
+        html! {}
+    };
+
     html! {
         <>
             { countdown_html }
             { match_end_html }
+            { minimap_html }
             if matches!(status, UiStatus::Playing(_) | UiStatus::Respawning(_)) && !nexus {
                 // Capture the Area HUD — timer + scores + capture bars, top-middle.
                 // Only renders when the server is sending match updates
@@ -507,6 +522,9 @@ pub struct UiProps {
     /// Last ship the player picked on the title screen / ship menu.
     /// Used by the Capture the Area auto-respawn overlay.
     pub last_spawn_entity: Option<EntityType>,
+    /// Snapshot of every visible ship for the CTA minimap. Empty in
+    /// Free Roam.
+    pub minimap_entries: Vec<MinimapEntry>,
 }
 
 /// Mutually exclusive statuses.
@@ -543,6 +561,48 @@ pub struct UiStatusRespawning {
 impl Mk48Game {
     pub(crate) fn update_ui_props(&self, context: &mut ClientContext<Self>, status: UiStatus) {
         let in_game = !matches!(status, UiStatus::Spawning);
+
+        // Build the minimap snapshot: one entry per alive, team-owned
+        // boat currently in the client's contact list. Cross-references
+        // contact.player_id() against match_update.players for the team
+        // lookup. Empty in Free Roam.
+        let minimap_entries: Vec<MinimapEntry> = if let Some(m) =
+            context.state.game.match_update.as_ref()
+        {
+            use common::contact::ContactTrait;
+            context
+                .state
+                .game
+                .contacts
+                .values()
+                .filter_map(|ic| {
+                    let contact = &ic.view;
+                    if !contact.is_boat() {
+                        return None;
+                    }
+                    let player_id = contact.player_id()?;
+                    let team = m
+                        .players
+                        .iter()
+                        .find(|p| p.player_id == player_id)
+                        .map(|p| p.team)?;
+                    let is_you = m
+                        .players
+                        .iter()
+                        .find(|p| p.is_you)
+                        .map(|p| p.player_id == player_id)
+                        .unwrap_or(false);
+                    Some(MinimapEntry {
+                        pos: contact.transform().position,
+                        team: Some(team),
+                        is_you,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let props = UiProps {
             fps: self.fps_counter.last_sample().unwrap_or(0.0),
             score: context.state.game.score,
@@ -554,6 +614,7 @@ impl Mk48Game {
             touch_screen: context.mouse.touch_screen,
             match_update: context.state.game.match_update.clone(),
             last_spawn_entity: self.last_spawn_entity,
+            minimap_entries,
         };
 
         context.set_ui_props(props, in_game);

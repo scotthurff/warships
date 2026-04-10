@@ -461,7 +461,7 @@ mod tests {
             entity.damage(entity.data().max_health() - Ticks::ONE);
             //entity.damage(Ticks::from_damage(1.0));
             assert!(
-                world.spawn_here_or_nearby(entity, 10000.0, None, false),
+                world.spawn_here_or_nearby(entity, 10000.0, None, false, None),
                 "could not spawn {:?}",
                 typ
             );
