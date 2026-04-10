@@ -283,6 +283,10 @@ impl World {
 
     /// Spawn basic entities (crates, oil platforms) to maintain their densities.
     pub fn spawn_statics(&mut self, ticks: Ticks) {
+        // CTA suppresses static spawns — no crates, no platforms, no HQs.
+        if self.suppress_statics {
+            return;
+        }
         let crate_count = self.arena.count(EntityType::Crate);
         let platform_count =
             self.arena.count(EntityType::OilPlatform) + self.arena.count(EntityType::Hq);

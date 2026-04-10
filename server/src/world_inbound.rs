@@ -248,13 +248,15 @@ impl CommandTrait for Spawn {
         boat.transform.position = spawn_position;
         boat.transform.direction = desired_direction;
         boat.guidance.direction_target = desired_direction;
-        // In CTA, cap the retry wander radius so ships don't end up
-        // halfway across the arena when the base center is blocked by
-        // terrain. 500 units lets the retry loop try positions within
-        // a modest ring around the base (base_radius=250, so anywhere
-        // up to 2x that).
+        // In CTA, cap the retry wander radius TIGHTLY. 350 units is
+        // base_radius (250) + 100 margin — spawns stay visibly "at"
+        // the base. If the retry loop can't find a valid position in
+        // that ring (e.g., terrain fully covering the base), the
+        // spawn returns error and the respawn overlay retries. Better
+        // to fail loud than to silently drop the player at the arena
+        // edge.
         let max_distance_override = if cta_team.is_some() {
-            Some(500.0)
+            Some(350.0)
         } else {
             None
         };

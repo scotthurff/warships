@@ -18,6 +18,11 @@ pub struct World {
     pub entities: Entities,
     pub terrain: Terrain,
     pub radius: f32,
+    /// When true, `spawn_statics` is a no-op. The Capture the Area match
+    /// loop sets this while a match is running so that crates, oil
+    /// platforms, and HQs don't clutter the playfield or distract bot
+    /// AI from the actual objective.
+    pub suppress_statics: bool,
 }
 
 impl World {
@@ -28,6 +33,7 @@ impl World {
             entities: Entities::new(),
             terrain: new_terrain(),
             radius: initial_radius,
+            suppress_statics: false,
         }
     }
 

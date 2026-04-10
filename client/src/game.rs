@@ -764,21 +764,24 @@ impl GameClient for Mk48Game {
                     None
                 };
 
-            let friendly = if let (Some(mine), Some(theirs)) =
-                (cta_my_team, cta_contact_team)
-            {
-                mine == theirs
-            } else {
-                context.state.core.is_friendly(contact.player_id())
+            let cta_friendly = match (cta_my_team, cta_contact_team) {
+                (Some(mine), Some(theirs)) => Some(mine == theirs),
+                _ => None,
             };
+            let friendly = cta_friendly
+                .unwrap_or_else(|| context.state.core.is_friendly(contact.player_id()));
 
-            let color_bytes = if friendly {
-                // Own team ships → bright green (friendly).
-                [58, 255, 140]
-            } else if cta_my_team.is_some() && contact.is_boat() && cta_contact_team.is_some() {
-                // CTA enemy team ship — paint red so it's unmistakable,
-                // overriding mk48's default white-for-unknown-boat.
+            let color_bytes = if cta_friendly == Some(true) {
+                // CTA own-team ships → wargame Blue (matches the HUD /
+                // minimap / team color). Don't use the mk48 green default;
+                // the user specifically wants blue for their teammates.
+                [96, 165, 250]
+            } else if cta_friendly == Some(false) && contact.is_boat() {
+                // CTA enemy team ship — red, unmistakable.
                 [248, 113, 113]
+            } else if friendly {
+                // Free-roam friendlies keep the mk48 default bright green.
+                [58, 255, 140]
             } else if contact.is_boat() {
                 [255; 3]
             } else {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::bot::*;
+use crate::entities::EntityIndex;
 use crate::entity_extension::EntityExtension;
 use crate::match_state::{ArenaLayout, BoatSnapshot, MatchEvent, MatchState, Team};
 use crate::player::*;
@@ -129,6 +130,46 @@ impl Server {
             }
             player.status = Status::Spawning;
             player.flags.left_game = false;
+        }
+    }
+
+    /// One-time cleanup of pre-existing static entities when a CTA
+    /// match starts. Walks the world entity pool and removes every
+    /// Crate, OilPlatform, and Hq carried over from the free-roam
+    /// session. With `world.suppress_statics = true` set in the same
+    /// tick, new statics won't spawn — so the CTA arena stays clean
+    /// for the rest of the match.
+    ///
+    /// Uses an iterate-and-remove-one pattern because swap_remove
+    /// inside world.remove() shifts adjacent indices. O(n²) but n is
+    /// bounded (≤ ~200 statics per arena) and this runs exactly once
+    /// per match.
+    fn clear_statics(&mut self) {
+        use maybe_parallel_iterator::IntoMaybeParallelIterator;
+
+        loop {
+            let to_remove = {
+                let found: Option<EntityIndex> = self
+                    .world
+                    .entities
+                    .par_iter()
+                    .into_maybe_parallel_iter()
+                    .find_any(|(_, entity)| {
+                        matches!(
+                            entity.entity_type,
+                            EntityType::Crate | EntityType::OilPlatform | EntityType::Hq
+                        )
+                    })
+                    .map(|(idx, _)| idx);
+                found
+            };
+            match to_remove {
+                Some(idx) => self.world.remove(
+                    idx,
+                    common::death_reason::DeathReason::Debug("cta cleanup".to_string()),
+                ),
+                None => break,
+            }
         }
     }
 
@@ -570,6 +611,15 @@ impl ArenaService for Server {
 
         self.counter = self.counter.next();
 
+        // Set the spawn-statics flag BEFORE world.update so spawn_statics
+        // is a no-op this tick if any player is in CTA mode. Free-roam
+        // ticks keep the normal crate/platform spawning.
+        let any_cta_player = self
+            .player
+            .iter_borrow()
+            .any(|p| p.game_mode == GameMode::CaptureTheArea);
+        self.world.suppress_statics = any_cta_player;
+
         // Capture kill events emitted during world.update so we can award
         // team points + per-player kill stats after the borrow releases.
         // (match_state.record_kill and player.match_stats need mutable
@@ -585,11 +635,7 @@ impl ArenaService for Server {
         // Only runs when at least one player has opted into CTA mode on the
         // title screen. Free Roam players are unaffected: no match clock,
         // no team HUD, no score updates.
-        let any_cta_player = self
-            .player
-            .iter_borrow()
-            .any(|p| p.game_mode == GameMode::CaptureTheArea);
-
+        // (any_cta_player was computed above for the suppress_statics flag)
         if any_cta_player {
             // Clamp the world to the fixed CTA arena so edge damage kicks
             // in beyond 1200 units and the client can draw a visible wall.
@@ -605,6 +651,10 @@ impl ArenaService for Server {
             ) {
                 self.match_state.start_match();
                 self.assign_match_teams();
+                // One-time sweep: remove any static entities (crates,
+                // oil platforms, HQs) carried over from the prior free-
+                // roam session so the CTA arena starts clean.
+                self.clear_statics();
                 info!(
                     "match {} started (Capture the Area)",
                     self.match_state.match_id
