@@ -8,6 +8,7 @@ pub(crate) mod game_ui;
 pub(crate) mod help_dialog;
 pub(crate) mod hint;
 pub(crate) mod logo;
+pub(crate) mod match_end_overlay;
 mod phrases;
 pub(crate) mod references_dialog;
 pub(crate) mod respawn_overlay;

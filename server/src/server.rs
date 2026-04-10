@@ -48,6 +48,90 @@ pub struct Server {
 }
 
 impl Server {
+    /// Handle the "Play Again" button from the CTA results screen.
+    ///
+    /// Despawns every boat in the world, resets match_state (bumps
+    /// match_id, clears scores + capture timers, goes back to Countdown),
+    /// zeros every player's match_stats, and re-assigns teams for a
+    /// fresh 5v5 match. The next `tick()` will see the Countdown phase
+    /// and the match rolls on.
+    fn handle_play_again(&mut self) {
+        info!(
+            "match {} play-again requested, resetting",
+            self.match_state.match_id
+        );
+
+        // Drain every boat the world currently knows about. We walk
+        // players first to clear their Status references, then the
+        // world's entity sectors get cleaned up organically by
+        // world.update() on the next tick via the existing physics
+        // path. For a hard reset we explicitly remove team-assigned
+        // players' entities.
+        let dead_indices: Vec<_> = self
+            .player
+            .iter_borrow()
+            .filter_map(|p| {
+                if p.match_team.is_some() {
+                    if let Status::Alive { entity_index, .. } = p.status {
+                        return Some(entity_index);
+                    }
+                }
+                None
+            })
+            .collect();
+        for idx in dead_indices {
+            self.world.remove(
+                idx,
+                common::death_reason::DeathReason::Debug("play again reset".to_string()),
+            );
+        }
+
+        // Zero out every CTA player's match_stats so the next match
+        // starts from a clean slate.
+        for mut p in self.player.iter_borrow_mut() {
+            if p.match_team.is_some() {
+                p.match_stats = PlayerMatchStats::default();
+                p.status = Status::Spawning;
+                p.flags = Flags::default();
+                // Keep match_team and selected_loadout — the player
+                // stays on their team and in their ship for the new
+                // match. The tick loop re-assigns late joiners.
+            }
+        }
+
+        // Reset the FSM. match_id bumps so stale client MatchUpdates
+        // are discarded; phase returns to Countdown for the new intro.
+        self.match_state.reset();
+
+        info!(
+            "match {} countdown starting (post play-again)",
+            self.match_state.match_id
+        );
+    }
+
+    /// Handle the "Quit to Title" button from the CTA results screen.
+    ///
+    /// Flips the player's game_mode back to FreeRoam, clears their
+    /// match_team, and puts them in Spawning. If this was the last
+    /// CTA participant, the tick loop will naturally stop ticking
+    /// match_state on the next pass.
+    fn handle_quit_to_title(&mut self, player_id: PlayerId) {
+        if let Some(mut player) = self.player.borrow_player_mut(player_id) {
+            info!("player {:?} quit to title", player.player_id);
+            player.game_mode = GameMode::FreeRoam;
+            player.match_team = None;
+            player.selected_loadout = None;
+            player.match_stats = PlayerMatchStats::default();
+            // If they still have a boat, mark it for cleanup so mk48's
+            // world.update sweeps it away next tick.
+            if let Status::Alive { .. } = player.status {
+                player.flags.left_game = true;
+            }
+            player.status = Status::Spawning;
+            player.flags.left_game = false;
+        }
+    }
+
     /// Build a `BoatSnapshot` for every alive boat whose player has a
     /// Blue/Red team assignment. This is the iterator that `match_state.tick`
     /// consumes to count ships inside each base and advance capture clocks.
@@ -131,6 +215,11 @@ impl Server {
     /// Humans (in CTA mode) always go Blue. Bots fill the remaining
     /// Blue slots up to 4, then the Red slots up to 5. Extra bots beyond
     /// 10 total get slotted onto whichever team is lighter.
+    ///
+    /// Each bot also gets a `selected_loadout` set based on the current
+    /// `match_state.ai_composition` and their slot within their team,
+    /// so the bot trait update can override the bot's Spawn command
+    /// entity_type with the composition-appropriate ship.
     fn assign_match_teams(&mut self) {
         // Humans first — they're always Blue, regardless of join order.
         for mut player in self.player.iter_borrow_mut() {
@@ -142,6 +231,7 @@ impl Server {
         let (mut blue, mut red) = self.count_teams();
         const BLUE_MAX: u32 = 5;
         const RED_MAX: u32 = 5;
+        let composition = self.match_state.ai_composition;
 
         for mut player in self.player.iter_borrow_mut() {
             if !player.is_bot() {
@@ -150,23 +240,31 @@ impl Server {
             if player.match_team.is_some() {
                 continue;
             }
-            let team = if blue < BLUE_MAX && blue <= red {
+            let (team, slot) = if blue < BLUE_MAX && blue <= red {
+                let slot = blue;
                 blue += 1;
-                Team::Blue
+                (Team::Blue, slot)
             } else if red < RED_MAX {
+                let slot = red;
                 red += 1;
-                Team::Red
+                (Team::Red, slot)
             } else {
                 // Both sides full — slot onto whichever is smaller.
                 if blue <= red {
+                    let slot = blue;
                     blue += 1;
-                    Team::Blue
+                    (Team::Blue, slot)
                 } else {
+                    let slot = red;
                     red += 1;
-                    Team::Red
+                    (Team::Red, slot)
                 }
             };
             player.match_team = Some(team);
+            // Clamp slot to composition range (max 5 slots) so extra bots
+            // cycle through the available ships rather than panicking.
+            let slot_u8 = slot.min(4) as u8;
+            player.selected_loadout = Some(composition.ship_for_slot(slot_u8));
         }
     }
 
@@ -278,6 +376,22 @@ impl ArenaService for Server {
         player_id: PlayerId,
         engine_player: &mut Player<Self>,
     ) -> Option<Update> {
+        // Intercept CTA lifecycle commands that need Server-level access
+        // before the generic CommandTrait dispatch runs. These mutate
+        // match_state + the player repo in ways that CommandTrait (which
+        // only gets &mut World) can't express.
+        match update {
+            Command::PlayAgain(_) => {
+                self.handle_play_again();
+                return None;
+            }
+            Command::QuitToTitle(_) => {
+                self.handle_quit_to_title(player_id);
+                return None;
+            }
+            _ => {}
+        }
+
         let player_tuple = self.player.get(player_id).unwrap();
         if let Err(e) = update.as_command().apply(
             &mut self.world,

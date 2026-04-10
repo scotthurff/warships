@@ -34,6 +34,13 @@ impl AsCommandTrait for Command {
             Command::Upgrade(ref v) => v as &dyn CommandTrait,
             Command::Team(ref v) => v as &dyn CommandTrait,
             Command::SelectGameMode(ref v) => v as &dyn CommandTrait,
+            // PlayAgain / QuitToTitle need Server-level access
+            // (match_state, player repo, world). They're intercepted in
+            // Server::player_command before this dispatch runs, so the
+            // no-op impls below are just placeholders to satisfy the
+            // exhaustive match.
+            Command::PlayAgain(ref v) => v as &dyn CommandTrait,
+            Command::QuitToTitle(ref v) => v as &dyn CommandTrait,
         }
     }
 }
@@ -53,6 +60,36 @@ impl CommandTrait for SelectGameMode {
     ) -> Result<(), &'static str> {
         let mut player = player_tuple.borrow_player_mut();
         player.game_mode = self.mode;
+        Ok(())
+    }
+}
+
+/// No-op placeholder — the real logic runs in Server::player_command.
+impl CommandTrait for PlayAgain {
+    fn apply(
+        &self,
+        _world: &mut World,
+        _player_tuple: &Arc<PlayerTuple>,
+        _players: &PlayerTupleRepo,
+        _teams: &mut TeamRepo<Server>,
+        _invitation_accepted: Option<InvitationDto>,
+        _rank: Option<RankNumber>,
+    ) -> Result<(), &'static str> {
+        Ok(())
+    }
+}
+
+/// No-op placeholder — the real logic runs in Server::player_command.
+impl CommandTrait for QuitToTitle {
+    fn apply(
+        &self,
+        _world: &mut World,
+        _player_tuple: &Arc<PlayerTuple>,
+        _players: &PlayerTupleRepo,
+        _teams: &mut TeamRepo<Server>,
+        _invitation_accepted: Option<InvitationDto>,
+        _rank: Option<RankNumber>,
+    ) -> Result<(), &'static str> {
         Ok(())
     }
 }

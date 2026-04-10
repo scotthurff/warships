@@ -382,10 +382,27 @@ impl kodiak_server::Bot<Server> for Bot {
     ) -> BotAction<<Server as ArenaService>::GameRequest> {
         let player_tuple = server.player.get(player_id).unwrap();
         let update = server.world.get_player_complete(player_tuple);
-        player
+        let action = player
             .inner
             .bot_mut()
             .unwrap()
-            .update(update, player_id, settings)
+            .update(update, player_id, settings);
+
+        // Post-process: in Capture the Area, the player's match_team is
+        // set and selected_loadout holds the fleet-composition ship this
+        // bot should use. Override the bot's randomly-picked spawn ship
+        // with the composition slot so team loadouts stay balanced.
+        match action {
+            BotAction::Some(Command::Spawn(mut spawn)) => {
+                let p = player_tuple.borrow_player();
+                if p.match_team.is_some() {
+                    if let Some(ship) = p.selected_loadout {
+                        spawn.entity_type = ship;
+                    }
+                }
+                BotAction::Some(Command::Spawn(spawn))
+            }
+            other => other,
+        }
     }
 }

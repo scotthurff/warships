@@ -133,6 +133,12 @@ pub enum Command {
     /// Set the player's game mode. Sent from the title screen before spawn.
     /// Mode persists for the session until the player returns to the title screen.
     SelectGameMode(SelectGameMode),
+    /// Reset the current Capture the Area match and start a new one.
+    /// Sent from the match-end results screen.
+    PlayAgain(PlayAgain),
+    /// Return to the title screen from a CTA match. Flips the player's
+    /// game_mode back to FreeRoam and clears their match_team + boat.
+    QuitToTitle(QuitToTitle),
 }
 
 /// Select a game mode on the title screen.
@@ -140,6 +146,17 @@ pub enum Command {
 pub struct SelectGameMode {
     pub mode: GameMode,
 }
+
+/// Reset the current CTA match. No payload — the server drains the
+/// existing boats, zeros stats, picks a new fleet composition, and kicks
+/// off a fresh countdown.
+#[derive(Clone, Encode, Decode, Debug)]
+pub struct PlayAgain;
+
+/// Quit to title from a CTA match. Server flips the player's game_mode
+/// back to FreeRoam and clears their match_team.
+#[derive(Clone, Encode, Decode, Debug)]
+pub struct QuitToTitle;
 
 /// Generic command to control one's ship.
 #[derive(Clone, Encode, Decode, PartialEq, Debug)]

@@ -23,7 +23,8 @@ use common::contact::{Contact, ContactTrait};
 use common::entity::{EntityData, EntityId, EntityKind, EntitySubKind, EntityType};
 use common::guidance::Guidance;
 use common::protocol::{
-    Command, Control, Fire, Hint, Pay, SelectGameMode, Spawn, Update, Upgrade,
+    Command, Control, Fire, Hint, Pay, PlayAgain, QuitToTitle, SelectGameMode, Spawn, Update,
+    Upgrade,
 };
 use common::ticks::Ticks;
 use common::transform::Transform;
@@ -1804,6 +1805,19 @@ impl GameClient for Mk48Game {
             }
             UiEvent::Team(team) => {
                 context.send_to_game(Command::Team(team));
+            }
+            UiEvent::PlayAgain => {
+                context.send_to_game(Command::PlayAgain(PlayAgain));
+            }
+            UiEvent::QuitToTitle => {
+                // Sent when the user clicks "Quit to Title" from the
+                // match-end overlay. Flips the player's mode back to
+                // Free Roam on the server and clears match state so
+                // the title screen mode picker can re-select CTA.
+                context.send_to_game(Command::QuitToTitle(QuitToTitle));
+                // Reset the local last_spawn_entity so returning to the
+                // title picker doesn't auto-respawn from stale state.
+                self.last_spawn_entity = None;
             }
             UiEvent::TouchRudder(rudder) => {
                 self.ui_state.touch_rudder = rudder;

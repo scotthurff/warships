@@ -8,6 +8,7 @@ use crate::ui::cta_respawn_overlay::CtaRespawnOverlay;
 use crate::ui::help_dialog::HelpDialog;
 use crate::ui::hint::Hint;
 use crate::ui::logo::logo;
+use crate::ui::match_end_overlay::MatchEndOverlay;
 use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
 use crate::ui::ship_menu::ShipMenu;
@@ -102,13 +103,22 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         (SHOOT_HINT, &["how", "fire"])
     ];
 
-    // Countdown overlay lives outside the Playing / Spawning branches
-    // because the server transitions the match into Countdown immediately
-    // on CTA start — the client may still be in the Spawning status while
-    // the countdown is already running.
+    // Countdown / match-end overlays live outside the Playing / Spawning
+    // branches because they cross-cut phase state. The countdown fires
+    // during MatchPhase::Countdown; the match-end results screen fires
+    // during MatchPhase::Ended.
     let countdown_html = if let Some(m) = props.match_update.as_ref() {
         if m.phase == common::protocol::MatchPhase::Countdown {
             html! { <CountdownOverlay match_update={m.clone()} /> }
+        } else {
+            html! {}
+        }
+    } else {
+        html! {}
+    };
+    let match_end_html = if let Some(m) = props.match_update.as_ref() {
+        if let common::protocol::MatchPhase::Ended { winner } = m.phase {
+            html! { <MatchEndOverlay match_update={m.clone()} {winner} /> }
         } else {
             html! {}
         }
@@ -119,6 +129,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     html! {
         <>
             { countdown_html }
+            { match_end_html }
             if matches!(status, UiStatus::Playing(_) | UiStatus::Respawning(_)) && !nexus {
                 // Capture the Area HUD — timer + scores + capture bars, top-middle.
                 // Only renders when the server is sending match updates
@@ -415,6 +426,10 @@ pub enum UiEvent {
     Submerge(bool),
     Upgrade(EntityType),
     Team(TeamRequest),
+    /// Reset the current Capture the Area match and start a new one.
+    PlayAgain,
+    /// Quit the current Capture the Area match back to the title screen.
+    QuitToTitle,
     /// Touch rudder input (-1.0 to 1.0)
     TouchRudder(f32),
     /// Touch throttle (0.0 to 1.0)
