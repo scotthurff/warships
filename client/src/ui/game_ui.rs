@@ -11,7 +11,7 @@ use crate::ui::logo::logo;
 use crate::ui::match_end_overlay::MatchEndOverlay;
 use crate::ui::references_dialog::ReferencesDialog;
 use crate::ui::respawn_overlay::RespawnOverlay;
-use crate::ui::ship_menu::ShipMenu;
+use crate::ui::ship_picker::ShipPicker;
 use crate::ui::ships_dialog::ShipsDialog;
 use crate::ui::status_overlay::StatusOverlay;
 use crate::ui::touch_controls::TouchControls;
@@ -35,6 +35,16 @@ use std::collections::HashMap;
 use stylist::yew::styled_component;
 use yew::prelude::*;
 
+/// Which step of the title-screen flow the player is currently on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TitleStep {
+    /// Mode selector (Free Roam vs Capture the Area) + Continue button.
+    ModeSelect,
+    /// Ship picker with level tabs, stat detail, and Start Game button.
+    /// CTA only — Free Roam skips this step.
+    ShipSelect,
+}
+
 #[styled_component(Mk48Ui)]
 pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let ctw = use_ctw();
@@ -50,6 +60,11 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // Area the player picks a ship and that picks propagates into the
     // `Spawn` command.
     let selected_ship = use_state::<Option<EntityType>, _>(|| None);
+
+    // Which step of the title flow we're on. Free Roam skips Step2 and
+    // spawns straight from Step1's Continue button. CTA proceeds to the
+    // ship picker.
+    let title_step = use_state(|| TitleStep::ModeSelect);
 
     let on_play = {
         let mode = *selected_mode;
@@ -72,6 +87,35 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let on_ship_pick = {
         let selected_ship = selected_ship.clone();
         Callback::from(move |entity_type: EntityType| selected_ship.set(Some(entity_type)))
+    };
+    // "Continue" from the mode-select step. In CTA mode this advances
+    // to the ship picker step. In Free Roam it spawns immediately
+    // (Free Roam keeps the single-step flow — no ship picker).
+    let on_continue = {
+        let mode = *selected_mode;
+        let title_step = title_step.clone();
+        let play_cb = on_play.clone();
+        Callback::from(move |_: MouseEvent| {
+            if mode == GameMode::CaptureTheArea {
+                title_step.set(TitleStep::ShipSelect);
+            } else {
+                play_cb.emit(PlayerAlias::default());
+            }
+        })
+    };
+    // "Back" from the ship-select step.
+    let on_back_to_modes = {
+        let title_step = title_step.clone();
+        Callback::from(move |_: MouseEvent| {
+            title_step.set(TitleStep::ModeSelect);
+        })
+    };
+    // "Start Game" from the ship-select step.
+    let on_start_from_picker = {
+        let play_cb = on_play.clone();
+        Callback::from(move |_: MouseEvent| {
+            play_cb.emit(PlayerAlias::default());
+        })
     };
 
     let margin = "0.5rem";
@@ -180,72 +224,72 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             } else {
                 if let UiStatus::Spawning = status {
                     <Positioner id="spawn" position={Position::Center}>
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 28px; min-width: 50%;">
-                            {logo()}
-                            // Mode selector — two big tiles
-                            <div style="display: flex; gap: 16px;">
-                                <div style={free_style.clone()} onclick={on_select_free_roam}>
-                                    <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Free Roam"}</div>
-                                    <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"Explore + destroy"}</div>
-                                </div>
-                                <div style={cta_style.clone()} onclick={on_select_cta}>
-                                    <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Capture the Area"}</div>
-                                    <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"5v5 timed match"}</div>
-                                </div>
-                            </div>
-                            // Ship picker — only shown for Capture the Area. All ships
-                            // unlocked via u32::MAX score. Pick flows into on_play.
-                            if *selected_mode == GameMode::CaptureTheArea {
-                                <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
-                                    <div style="font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #94A3B8;">
-                                        if selected_ship.is_some() {
-                                            {"Ship selected — ready when you are"}
-                                        } else {
-                                            {"Select your ship"}
-                                        }
+                        if *title_step == TitleStep::ModeSelect {
+                            // ─── STEP 1: Mode select + difficulty ─────────────
+                            <div style="display: flex; flex-direction: column; align-items: center; gap: 28px; min-width: 50%;">
+                                {logo()}
+                                // Mode selector — two big tiles
+                                <div style="display: flex; gap: 16px;">
+                                    <div style={free_style.clone()} onclick={on_select_free_roam}>
+                                        <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Free Roam"}</div>
+                                        <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"Explore + destroy"}</div>
                                     </div>
-                                    <ShipMenu
-                                        score={u32::MAX}
-                                        onclick={on_ship_pick}
-                                        closable={false}
-                                    />
+                                    <div style={cta_style.clone()} onclick={on_select_cta}>
+                                        <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Capture the Area"}</div>
+                                        <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"5v5 timed match"}</div>
+                                    </div>
                                 </div>
-                            }
-                            // Difficulty selector — wargame style
-                            <div style="display: flex; gap: 10px;">
+                                // Difficulty selector — wargame style
+                                <div style="display: flex; gap: 10px;">
+                                    <button
+                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(34,197,94,0.4); border-left: 3px solid #22C55E; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
+                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Captain); })}
+                                    >{"Captain"}</button>
+                                    <button
+                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #FCD34D; border: 1px solid rgba(234,179,8,0.3); border-left: 3px solid #EAB308; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
+                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Admiral); })}
+                                    >{"Admiral"}</button>
+                                    <button
+                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #F87171; border: 1px solid rgba(239,68,68,0.3); border-left: 3px solid #EF4444; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
+                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::FleetCommander); })}
+                                    >{"Fleet Cmdr"}</button>
+                                </div>
+                                // Continue button. Free Roam spawns immediately;
+                                // CTA advances to the ship picker step.
                                 <button
-                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(34,197,94,0.4); border-left: 3px solid #22C55E; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Captain); })}
-                                >{"Captain"}</button>
-                                <button
-                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #FCD34D; border: 1px solid rgba(234,179,8,0.3); border-left: 3px solid #EAB308; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Admiral); })}
-                                >{"Admiral"}</button>
-                                <button
-                                    style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #F87171; border: 1px solid rgba(239,68,68,0.3); border-left: 3px solid #EF4444; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                    onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::FleetCommander); })}
-                                >{"Fleet Cmdr"}</button>
+                                    id="play_button"
+                                    style="
+                                        display: flex; align-items: center; justify-content: center;
+                                        min-width: 200px; height: 56px; padding: 0 40px;
+                                        background: rgba(15,23,42,0.92);
+                                        color: #4ADE80;
+                                        border: 1px solid rgba(34,197,94,0.4);
+                                        border-left: 3px solid #22C55E;
+                                        border-radius: 2px;
+                                        font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
+                                        font-size: 18px; font-weight: 700;
+                                        letter-spacing: 3px; text-transform: uppercase;
+                                        cursor: pointer;
+                                        box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+                                    "
+                                    onclick={on_continue}
+                                >
+                                    if *selected_mode == GameMode::CaptureTheArea {
+                                        {"Continue >"}
+                                    } else {
+                                        {"Start Game"}
+                                    }
+                                </button>
                             </div>
-                            // Play button — wargame primary CTA style
-                            <button
-                                id="play_button"
-                                style="
-                                    display: flex; align-items: center; justify-content: center;
-                                    min-width: 200px; height: 56px; padding: 0 40px;
-                                    background: rgba(15,23,42,0.92);
-                                    color: #4ADE80;
-                                    border: 1px solid rgba(34,197,94,0.4);
-                                    border-left: 3px solid #22C55E;
-                                    border-radius: 2px;
-                                    font-family: 'Menlo', 'SF Mono', 'Courier New', monospace;
-                                    font-size: 18px; font-weight: 700;
-                                    letter-spacing: 3px; text-transform: uppercase;
-                                    cursor: pointer;
-                                    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-                                "
-                                onclick={on_play.reform(|_: MouseEvent| PlayerAlias::default())}
-                            >{"Start Game"}</button>
-                        </div>
+                        } else {
+                            // ─── STEP 2: Ship picker (CTA only) ──────────────
+                            <ShipPicker
+                                selected={*selected_ship}
+                                on_pick={on_ship_pick}
+                                on_back={on_back_to_modes}
+                                on_start={on_start_from_picker}
+                            />
+                        }
                     </Positioner>
                 }
                 <div style="position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); display: flex; gap: 16px;">

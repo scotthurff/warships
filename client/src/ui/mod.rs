@@ -13,6 +13,7 @@ mod phrases;
 pub(crate) mod references_dialog;
 pub(crate) mod respawn_overlay;
 pub(crate) mod ship_menu;
+pub(crate) mod ship_picker;
 pub(crate) mod ships_dialog;
 pub(crate) mod sprite;
 pub(crate) mod status_overlay;
