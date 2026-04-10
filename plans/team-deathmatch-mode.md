@@ -743,13 +743,39 @@ When player dies, show brief "RESPAWNING..." overlay (2s countdown). No ship sel
 
 **Deliverable:** Full loop — ship picker → countdown → match → results → reset → ship picker.
 
-### Phase 4: Polish (Day 4)
+### Phase 4: Polish (Day 4+)
 
-- Edge damage for ships beyond arena radius
-- Audio cues (countdown beeps, match start horn, capture complete, 1-minute warning, match end fanfare)
-- Playtest balance tuning (capture duration, kill points, arena size)
-- Minimap team colors (blue dots vs red diamonds)
-- Spectator-style camera on match end (camera pans to the winning team's base)
+#### From the original polish list
+- Edge damage for ships beyond arena radius (verify mk48's existing path triggers against the clamped 1200 radius)
+- Audio cues: countdown beeps (3/2/1), match start horn, capture-in-progress chime, capture complete sting, 1-minute warning, match end fanfare
+- Playtest balance tuning — capture duration (30s feels long?), kill/capture point ratio (10 vs 50), arena radius, bot difficulty curve
+- Spectator-style camera on match end (camera pans to the winning team's base while results overlay fades in)
+
+#### Minimap (promoted from a line to a concrete deliverable)
+- Full-arena minimap overlay, bottom-right corner, translucent panel
+- Blue dots for allied ships, red diamonds for enemy ships (team-colored markers)
+- Both base circles marked with team color
+- Current capture progress rendered around each base marker
+- Hidden in Free Roam; only renders when `match_update.is_some()`
+- New component: `client/src/ui/minimap.rs`
+
+#### Known gaps promoted from the playtest notes
+- **Bot "push enemy base" AI** — biggest gameplay gap. Bots currently run mk48's default free-roam AI (roam + attack nearest enemy). They don't understand the CTA objective, so captures only happen when the human player pushes. Add a heuristic: when not in active combat AND the enemy base capture clock is < 20s, steer toward the enemy base. When the enemy is attacking own base, steer home to defend.
+- **Capture clock decay instead of hard reset** — the plan's "ship leaves base → clock resets to 0" rule feels brutal when a ship drifts out for a single tick and loses all progress. Change to: clock decays at 2× the capture rate (so a full reset still takes ~15s) while no friendlies are inside. Gives players a grace period to re-enter.
+- **Late joiner fleet loadout** — `assign_late_joiners()` assigns a team but forgets to set `selected_loadout` from the current `ai_fleet`. Late-joining bots spawn with random ships instead of fleet-appropriate ones. One-line fix.
+- **Fleet display in HUD** — the client never shows what fleet was picked for the current match. Add a small line to the pre-match countdown overlay or the match HUD: "Fleet: Bismarck, Fletcher ×2, Kolkata ×2" or similar.
+- **Stale client state on Play Again** — haven't stress-tested repeated Play Again. Verify `match_id` epoch handling actually discards stale packets when it matters. Write an integration test for the reset → countdown → play loop.
+- **Ship picker level state reset on Back** — when the player taps Back from ShipPicker, the current level tab isn't preserved if they re-enter. Move level state to parent (Mk48Ui) or wrap it in a shared use_state.
+- **Zero-value stat rows in ship detail panel** — the picker shows `Mines 0 / Aircraft 0` for most ships. Cosmetic; hide rows whose value is 0 to tighten the panel.
+
+#### Ordered by impact on feel
+1. Bot push-to-base AI — makes bots actually play the objective
+2. Capture clock decay — removes the "why did my progress vanish" frustration
+3. Audio cues (countdown + match end) — fast wins, big atmosphere bump
+4. Minimap — the biggest missing piece of situational awareness
+5. Edge damage verification — cheap sanity check
+6. Late joiner loadout fix — trivial
+7. Everything else — after a proper playtest
 
 ---
 

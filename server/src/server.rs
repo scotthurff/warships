@@ -217,9 +217,9 @@ impl Server {
     /// 10 total get slotted onto whichever team is lighter.
     ///
     /// Each bot also gets a `selected_loadout` set based on the current
-    /// `match_state.ai_composition` and their slot within their team,
-    /// so the bot trait update can override the bot's Spawn command
-    /// entity_type with the composition-appropriate ship.
+    /// `match_state.ai_fleet` and their slot within their team, so the
+    /// bot trait update can override the bot's Spawn command
+    /// entity_type with the fleet-appropriate ship.
     fn assign_match_teams(&mut self) {
         // Humans first — they're always Blue, regardless of join order.
         for mut player in self.player.iter_borrow_mut() {
@@ -231,7 +231,7 @@ impl Server {
         let (mut blue, mut red) = self.count_teams();
         const BLUE_MAX: u32 = 5;
         const RED_MAX: u32 = 5;
-        let composition = self.match_state.ai_composition;
+        let fleet = self.match_state.ai_fleet.clone();
 
         for mut player in self.player.iter_borrow_mut() {
             if !player.is_bot() {
@@ -264,7 +264,7 @@ impl Server {
             // Clamp slot to composition range (max 5 slots) so extra bots
             // cycle through the available ships rather than panicking.
             let slot_u8 = slot.min(4) as u8;
-            player.selected_loadout = Some(composition.ship_for_slot(slot_u8));
+            player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
         }
     }
 

@@ -28,7 +28,13 @@ impl Mk48Camera {
     const MIN_ZOOM: f32 = 0.001; // Allow zooming in far in debug mode.
     #[cfg(not(debug_assertions))]
     const MIN_ZOOM: f32 = 0.216; // 0.6×sqrt(1÷.6)^−4 aka 4 full steps to min zoom
-    const MAX_ZOOM: f32 = 1.0; // has to be 1.0 for full view
+    // Let the player zoom out far enough to see the full Capture the
+    // Area arena (~1200 unit radius). The effective visible range is
+    // MAX_ZOOM * ship.camera_range(), and for a mid-tier ship
+    // camera_range is roughly 600-900, so 2.5 gives ~1500-2250 units
+    // of visible radius — enough to frame the whole playfield while
+    // still keeping an upper bound so the camera doesn't go absurd.
+    const MAX_ZOOM: f32 = 2.5;
     const DEFAULT_ZOOM_INPUT: f32 = 0.6; // not changed
     const ZOOM_SPEED: f32 = 1.2909944; // sqrt(1÷.6) aka 2 full steps to max zoom
     const MENU_VISUAL_RANGE: f32 = 300.0;

@@ -7,7 +7,7 @@
 //! composition rotation. The tick function is pure and testable in isolation
 //! via the [`BoatSnapshot`] input and [`MatchEvent`] output.
 
-use common::entity::EntityType;
+use common::entity::{EntityKind, EntitySubKind, EntityType};
 // Re-export the shared protocol types under their local names so match_state.rs
 // (and its tests) read the same as before the `common::protocol` move.
 pub use common::protocol::{MatchPhase, MatchTeam as Team, MatchWinner as Winner};
@@ -51,49 +51,76 @@ impl ArenaLayout {
 // they can cross the client/server boundary. They're re-exported above for
 // local ergonomics.
 
-// ─── Fleet Compositions ───────────────────────────────────────────────────
+// ─── Fleet Generation ─────────────────────────────────────────────────────
 
-/// Balanced 5-ship loadouts. Both teams always get the identical composition
-/// within a single match. Selected at match start, rotated between matches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FleetComposition {
-    BattleLine,        // 2 BB + 1 CL + 2 DD — heavy slug-fest
-    DestroyerSquadron, // 5 DD — fast, torpedo-heavy
-    MixedFleet,        // 1 BB + 2 CL + 2 DD — balanced
-    LightRaiders,      // 1 CL + 4 DD — speed and skirmishing
+/// A procedurally-generated 5-ship fleet for a single match. Both teams
+/// get a mirror of the same `Fleet` so the match starts balanced, but
+/// the actual ships change from match to match.
+///
+/// This replaces the previous hardcoded BattleLine/DestroyerSquadron/etc
+/// preset menu — the user wanted ship variety, not four fixed recipes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fleet {
+    pub ships: [EntityType; 5],
 }
 
-impl FleetComposition {
+impl Fleet {
+    /// Lowest ship level eligible for the bot pool. Levels below this
+    /// tend to be weak starter boats that don't hold up in a 5-minute
+    /// match.
+    const MIN_LEVEL: u8 = 3;
+    /// Highest ship level eligible for the bot pool. Caps at 6 so matches
+    /// don't become battleship-on-battleship slugfests every time.
+    const MAX_LEVEL: u8 = 6;
+
+    /// Pick 5 random ships from the level 3..=6 warship pool, excluding
+    /// weird edge cases (submarines, minelayers, dredgers, pirates) that
+    /// don't play well in CTA. Duplicates are allowed — a two-Bismarck
+    /// fleet is a valid outcome. Both teams use this same fleet.
     pub fn random(rng: &mut impl Rng) -> Self {
-        match rng.gen_range(0..4) {
-            0 => Self::BattleLine,
-            1 => Self::DestroyerSquadron,
-            2 => Self::MixedFleet,
-            _ => Self::LightRaiders,
+        use kodiak_server::rand::seq::IteratorRandom;
+
+        let pool: Vec<EntityType> = EntityType::iter()
+            .filter(|e| {
+                let data = e.data();
+                if data.kind != EntityKind::Boat {
+                    return false;
+                }
+                if data.level < Self::MIN_LEVEL || data.level > Self::MAX_LEVEL {
+                    return false;
+                }
+                // Exclude sub-kinds that would break CTA balance.
+                use EntitySubKind::*;
+                !matches!(
+                    data.sub_kind,
+                    Submarine | Minelayer | Dredger | Pirate | Tanker | Icebreaker
+                )
+            })
+            .collect();
+
+        // Fall back to a single-ship pool if the filter somehow empties
+        // — shouldn't happen with the mk48 ship catalogue but we'd
+        // rather crash a single match than panic the whole server.
+        if pool.is_empty() {
+            let default = EntityType::iter()
+                .find(|e| e.data().kind == EntityKind::Boat)
+                .expect("at least one Boat entity type must exist");
+            return Self {
+                ships: [default; 5],
+            };
+        }
+
+        let mut pick = || pool.iter().copied().choose(rng).unwrap();
+        Self {
+            ships: [pick(), pick(), pick(), pick(), pick()],
         }
     }
 
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::BattleLine => "Battle Line",
-            Self::DestroyerSquadron => "Destroyer Squadron",
-            Self::MixedFleet => "Mixed Fleet",
-            Self::LightRaiders => "Light Raiders",
-        }
-    }
-
-    /// Returns the ship entity type for a given slot (0..5) in this composition.
-    /// Both teams use the same composition for balance.
+    /// Returns the ship entity type for a given slot (0..5) in this fleet.
+    /// Slots beyond 4 wrap for robustness but in practice we only have 5
+    /// bots per team.
     pub fn ship_for_slot(&self, slot: u8) -> EntityType {
-        debug_assert!(slot < 5, "slot must be 0..5");
-        use EntityType::*;
-        let ships: [EntityType; 5] = match self {
-            Self::BattleLine => [Bismarck, Bismarck, Kolkata, Fletcher, Fletcher],
-            Self::DestroyerSquadron => [Fletcher, Fletcher, Fletcher, Fletcher, Fletcher],
-            Self::MixedFleet => [Bismarck, Kolkata, Kolkata, Fletcher, Fletcher],
-            Self::LightRaiders => [Kolkata, Fletcher, Fletcher, Fletcher, Fletcher],
-        };
-        ships[(slot as usize) % 5]
+        self.ships[(slot as usize) % self.ships.len()]
     }
 }
 
@@ -113,7 +140,8 @@ pub struct MatchState {
     pub blue_base_capture: Duration,
     /// Blue's progress toward capturing Red's base.
     pub red_base_capture: Duration,
-    pub ai_composition: FleetComposition,
+    /// The procedurally-generated fleet for this match. Both teams mirror it.
+    pub ai_fleet: Fleet,
     pub layout: ArenaLayout,
 }
 
@@ -128,7 +156,7 @@ impl MatchState {
             red_score: 0,
             blue_base_capture: Duration::ZERO,
             red_base_capture: Duration::ZERO,
-            ai_composition: FleetComposition::random(&mut rng),
+            ai_fleet: Fleet::random(&mut rng),
             layout: ArenaLayout::DEFAULT,
         }
     }
@@ -273,7 +301,7 @@ impl MatchState {
         self.red_score = 0;
         self.blue_base_capture = Duration::ZERO;
         self.red_base_capture = Duration::ZERO;
-        self.ai_composition = FleetComposition::random(&mut rng);
+        self.ai_fleet = Fleet::random(&mut rng);
     }
 
     fn determine_winner(&self) -> Winner {
@@ -571,26 +599,45 @@ mod tests {
     }
 
     #[test]
-    fn fleet_composition_ship_for_slot_bounds() {
-        let comp = FleetComposition::MixedFleet;
-        // Should not panic for any slot 0..5
-        for slot in 0..5 {
-            let _ = comp.ship_for_slot(slot);
+    fn fleet_ship_for_slot_bounds() {
+        let mut rng = rand::thread_rng();
+        let fleet = Fleet::random(&mut rng);
+        // Should not panic for any slot 0..5, and slots beyond length
+        // wrap cleanly.
+        for slot in 0..10u8 {
+            let _ = fleet.ship_for_slot(slot);
         }
     }
 
     #[test]
-    fn all_compositions_have_5_ships() {
-        for comp in [
-            FleetComposition::BattleLine,
-            FleetComposition::DestroyerSquadron,
-            FleetComposition::MixedFleet,
-            FleetComposition::LightRaiders,
-        ] {
-            // Check each slot produces a valid ship
-            for slot in 0..5 {
-                comp.ship_for_slot(slot);
+    fn random_fleet_has_5_ships() {
+        let mut rng = rand::thread_rng();
+        let fleet = Fleet::random(&mut rng);
+        assert_eq!(fleet.ships.len(), 5);
+        // Every ship should actually be a boat of a reasonable level.
+        for ship in fleet.ships.iter() {
+            let data = ship.data();
+            assert_eq!(data.kind, EntityKind::Boat);
+            assert!(data.level >= Fleet::MIN_LEVEL);
+            assert!(data.level <= Fleet::MAX_LEVEL);
+        }
+    }
+
+    #[test]
+    fn random_fleets_produce_variety() {
+        // Not a strict property test, but across a hundred rolls we'd
+        // expect at least two distinct fleets if generation is actually
+        // random.
+        let mut rng = rand::thread_rng();
+        let first = Fleet::random(&mut rng);
+        let mut distinct_seen = false;
+        for _ in 0..100 {
+            let next = Fleet::random(&mut rng);
+            if next != first {
+                distinct_seen = true;
+                break;
             }
         }
+        assert!(distinct_seen, "Fleet::random should produce variety");
     }
 }

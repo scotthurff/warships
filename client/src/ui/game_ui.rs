@@ -45,6 +45,12 @@ enum TitleStep {
     ShipSelect,
 }
 
+/// The default player name used on the title screen. The upstream default
+/// rendered as "Guest" which felt impersonal for a single-player game.
+fn default_alias() -> PlayerAlias {
+    PlayerAlias::new_unsanitized("Admiral")
+}
+
 #[styled_component(Mk48Ui)]
 pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let ctw = use_ctw();
@@ -99,7 +105,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             if mode == GameMode::CaptureTheArea {
                 title_step.set(TitleStep::ShipSelect);
             } else {
-                play_cb.emit(PlayerAlias::default());
+                play_cb.emit(default_alias());
             }
         })
     };
@@ -114,7 +120,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let on_start_from_picker = {
         let play_cb = on_play.clone();
         Callback::from(move |_: MouseEvent| {
-            play_cb.emit(PlayerAlias::default());
+            play_cb.emit(default_alias());
         })
     };
 

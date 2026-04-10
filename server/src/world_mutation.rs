@@ -290,7 +290,7 @@ impl Mutation {
 
                 // Cannot spawn in loop that borrows entity's guidance.
                 for armament_entity in armament_entities {
-                    world.spawn_here_or_nearby(armament_entity, 0.0, None);
+                    world.spawn_here_or_nearby(armament_entity, 0.0, None, false);
                 }
             }
         };
@@ -387,7 +387,7 @@ impl Mutation {
                 loot_entity.ticks += lifespan * (rng.gen::<f32>() * 0.25)
             }
 
-            if world.spawn_here_or_nearby(loot_entity, data.radius * 0.15, None) {
+            if world.spawn_here_or_nearby(loot_entity, data.radius * 0.15, None, false) {
                 loot_value += match loot_type {
                     EntityType::Coin => EntityData::COIN_VALUE,
                     _ => 2,

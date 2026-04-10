@@ -116,18 +116,18 @@ impl CommandTrait for Spawn {
         }
          */
 
-        // Capture the Area override: if the player is in CTA mode and has
-        // been assigned a team, force-spawn at their team base with a tight
-        // radius. This bypasses mk48's level-based vertical bias and any
-        // death exclusion zone — in CTA you always respawn at your own base.
-        let cta_team_spawn = if player.game_mode == GameMode::CaptureTheArea {
-            player.match_team.map(|team| match team {
-                crate::match_state::Team::Blue => ArenaLayout::DEFAULT.blue_base,
-                crate::match_state::Team::Red => ArenaLayout::DEFAULT.red_base,
-            })
-        } else {
-            None
-        };
+        // Capture the Area override: if the player has a match_team
+        // assignment (humans AND bots), force-spawn at their team base.
+        // This bypasses mk48's level-based vertical bias and any death
+        // exclusion zone — in CTA you always respawn at your own base.
+        // We key on match_team (not game_mode) so that bots — whose
+        // game_mode stays FreeRoam by default — still get routed to
+        // their assigned base at CTA match start.
+        let cta_team = player.match_team;
+        let cta_team_spawn: Option<Vec2> = cta_team.map(|team| match team {
+            crate::match_state::Team::Blue => ArenaLayout::DEFAULT.blue_base,
+            crate::match_state::Team::Red => ArenaLayout::DEFAULT.red_base,
+        });
 
         if let Some(base_pos) = cta_team_spawn {
             spawn_position = base_pos;
@@ -210,11 +210,39 @@ impl CommandTrait for Spawn {
 
         drop(player);
 
+        // Pick a spawn heading that doesn't point the player immediately
+        // into the world boundary.
+        //
+        //  * CTA: face the enemy base (crosses the arena), so the player
+        //    is pointed toward the objective.
+        //  * Free Roam: face the world origin from wherever we landed,
+        //    so edge-hugging spawns don't immediately run aground.
+        //
+        // spawn_here_or_nearby's retry loop otherwise randomizes the
+        // direction, so we pass preserve_direction=true to keep this.
+        let desired_direction: Angle = if let Some(team) = cta_team {
+            let enemy_base = match team {
+                crate::match_state::Team::Blue => ArenaLayout::DEFAULT.red_base,
+                crate::match_state::Team::Red => ArenaLayout::DEFAULT.blue_base,
+            };
+            Angle::from_vec(enemy_base - spawn_position)
+        } else {
+            // Free Roam: face inward toward origin if spawn is away from
+            // (0, 0), otherwise default to 0.0 (east).
+            if spawn_position.length_squared() > 1.0 {
+                Angle::from_vec(-spawn_position)
+            } else {
+                Angle::ZERO
+            }
+        };
+
         let mut boat = Entity::new(self.entity_type, Some(Arc::clone(player_tuple)));
         boat.transform.position = spawn_position;
+        boat.transform.direction = desired_direction;
+        boat.guidance.direction_target = desired_direction;
         //#[cfg(debug_assertions)]
         //let begin = std::time::Instant::now();
-        if world.spawn_here_or_nearby(boat, spawn_radius, exclusion_zone) {
+        if world.spawn_here_or_nearby(boat, spawn_radius, exclusion_zone, true) {
             /*
             #[cfg(debug_assertions)]
             println!(
@@ -432,7 +460,7 @@ impl CommandTrait for Fire {
                 };
                 armament_entity.transform.direction += thread_rng().gen::<Angle>() * deviation;
 
-                if !world.spawn_here_or_nearby(armament_entity, 0.0, None) {
+                if !world.spawn_here_or_nearby(armament_entity, 0.0, None, false) {
                     return Err("failed to fire from current location");
                 }
             }
@@ -494,7 +522,7 @@ impl CommandTrait for Pay {
             payment.altitude = entity.altitude;
 
             // If payment successfully spawns, withdraw funds.
-            if world.spawn_here_or_nearby(payment, 1.0, None) {
+            if world.spawn_here_or_nearby(payment, 1.0, None, false) {
                 player.score -= withdraw;
             }
 

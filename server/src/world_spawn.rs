@@ -41,9 +41,13 @@ impl World {
         mut entity: Entity,
         initial_radius: f32,
         exclusion_zone: Option<Vec2>,
+        preserve_direction: bool,
     ) -> bool {
         let retry = initial_radius > 0.0;
         let is_bot = entity.is_boat() && { entity.borrow_player().player_id.is_bot() };
+        // Remember the caller's intended heading so we can restore it after
+        // the retry loop (which otherwise randomizes direction every pass).
+        let original_direction = entity.transform.direction;
         if retry {
             let start_time = Instant::now();
             let mut rng = thread_rng();
@@ -110,6 +114,13 @@ impl World {
                         threshold
                     );
                 }
+            }
+
+            // Restore the caller's heading if they asked us to. This is
+            // used for CTA spawns (face the enemy base) and free-roam
+            // spawns near the world edge (face inward).
+            if preserve_direction {
+                entity.transform.direction = original_direction;
             }
 
             // Without this, some entities would rotate to angle 0 after spawning.
