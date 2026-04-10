@@ -8,7 +8,7 @@ use atomic_refcell::AtomicRef;
 use common::complete::CompleteTrait;
 use common::contact::ContactTrait;
 use common::death_reason::DeathReason;
-use common::protocol::{TeamUpdate, Update};
+use common::protocol::{MatchUpdate, TeamUpdate, Update};
 use common::terrain;
 use common::terrain::{ChunkSet, Terrain};
 use common::ticks::{Ticks, TicksRepr};
@@ -47,6 +47,7 @@ impl<'a, I: Iterator<Item = ContactRef<'a>>> CompleteRef<'a, I> {
         self,
         counter: Ticks,
         team: Vec<TeamUpdate>,
+        match_update: Option<MatchUpdate>,
         loaded_chunks: &mut ChunkSet,
     ) -> Update {
         let death_reason = if let Status::Dead { reason, .. } = &self.player.status {
@@ -89,9 +90,9 @@ impl<'a, I: Iterator<Item = ContactRef<'a>>> CompleteRef<'a, I> {
         *loaded_chunks = new_loaded_chunks;
 
         Update {
-            // Match state is only populated in Capture the Area mode,
-            // wired in task #28. In Free Roam (and until then) it stays `None`.
-            match_update: None,
+            // Match state is only populated in Capture the Area mode.
+            // In Free Roam it stays `None`.
+            match_update,
             contacts: self
                 .contacts
                 .unwrap()

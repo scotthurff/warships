@@ -3,6 +3,7 @@
 
 use crate::bot::*;
 use crate::entity_extension::EntityExtension;
+use crate::match_state::{BoatSnapshot, MatchEvent, MatchState};
 use crate::player::*;
 use crate::protocol::*;
 use crate::team::TeamRepo;
@@ -12,7 +13,7 @@ use common::entity::EntityData;
 use common::entity::EntityType;
 use common::protocol::TeamDto;
 use common::protocol::TeamUpdate;
-use common::protocol::{Command, Update};
+use common::protocol::{Command, GameMode, MatchPhase, MatchUpdate, Update};
 use common::terrain::ChunkSet;
 use common::ticks::Ticks;
 use common::util::level_to_score;
@@ -38,6 +39,10 @@ pub struct Server {
     /// update -> get_client_update.
     team_update: Option<(Arc<[TeamDto]>, Arc<[TeamId]>)>,
     free_points: u32,
+    /// Shared Capture the Area match state. Only ticks while at least one
+    /// player is in `GameMode::CaptureTheArea`. Players in Free Roam are
+    /// unaffected.
+    pub match_state: MatchState,
 }
 
 /// Stores a player, and metadata related to it. Data stored here may only be accessed when processing,
@@ -86,6 +91,7 @@ impl ArenaService for Server {
             } else {
                 0
             },
+            match_state: MatchState::new(),
         }
     }
 
@@ -187,9 +193,32 @@ impl ArenaService for Server {
             }
             ret
         };
+        // Build a MatchUpdate for CTA players so the client sees the
+        // countdown/timer/score. Free Roam players get `None` and the HUD
+        // stays untouched.
+        let match_update = {
+            let is_cta =
+                player_tuple.borrow_player().game_mode == GameMode::CaptureTheArea;
+            if is_cta {
+                let m = &self.match_state;
+                Some(MatchUpdate {
+                    match_id: m.match_id,
+                    phase: m.phase,
+                    remaining_ms: m.remaining.as_millis() as u32,
+                    blue_score: m.blue_score,
+                    red_score: m.red_score,
+                    blue_base_capture_ms: m.blue_base_capture.as_millis() as u32,
+                    red_base_capture_ms: m.red_base_capture.as_millis() as u32,
+                })
+            } else {
+                None
+            }
+        };
+
         Some(self.world.get_player_complete(player_tuple).into_update(
             self.counter,
             team_update,
+            match_update,
             &mut client.loaded_chunks,
         ))
     }
@@ -247,6 +276,65 @@ impl ArenaService for Server {
         self.world.update(Ticks::ONE, &mut |killer, dead| {
             context.tally_victory(killer, dead)
         });
+
+        // ─── Capture the Area match tick ─────────────────────────────────
+        //
+        // Only runs when at least one player has opted into CTA mode on the
+        // title screen. Free Roam players are unaffected: no match clock,
+        // no team HUD, no score updates.
+        let any_cta_player = self
+            .player
+            .iter_borrow()
+            .any(|p| p.game_mode == GameMode::CaptureTheArea);
+
+        if any_cta_player {
+            // First CTA player arrived? Kick the match off.
+            if matches!(
+                self.match_state.phase,
+                MatchPhase::Waiting | MatchPhase::Ended { .. }
+            ) {
+                self.match_state.start_match();
+                info!(
+                    "match {} started (Capture the Area)",
+                    self.match_state.match_id
+                );
+            }
+
+            // Phase 1: empty boat snapshots — capture mechanics land in
+            // Phase 2 (task #29 assigns teams, Phase 2 builds the iterator
+            // from `self.player` + `self.world.entities`).
+            let dt = Duration::from_secs_f32(Ticks::PERIOD_SECS);
+            let events = self
+                .match_state
+                .tick(dt, std::iter::empty::<BoatSnapshot>());
+
+            for event in events {
+                match event {
+                    MatchEvent::PhaseChanged(phase) => {
+                        info!(
+                            "match {}: phase -> {:?}",
+                            self.match_state.match_id, phase
+                        );
+                    }
+                    MatchEvent::BaseCaptured { by, at } => {
+                        info!(
+                            "match {}: {:?} captured {:?} base",
+                            self.match_state.match_id, by, at
+                        );
+                    }
+                    MatchEvent::MatchEnded {
+                        winner,
+                        blue_score,
+                        red_score,
+                    } => {
+                        info!(
+                            "match {} ended: winner={:?} blue={} red={}",
+                            self.match_state.match_id, winner, blue_score, red_score
+                        );
+                    }
+                }
+            }
+        }
 
         // Needs to be called before clients receive updates, but after World::update.
         self.world.terrain.pre_update();
