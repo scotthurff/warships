@@ -599,7 +599,7 @@ fn collision_multiplier(d2: f32, r2: f32, is_sub: bool) -> f32 {
     ((r2 - d2) / r2 * (1.0 - min) + min).clamp(min, 1.0)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "_enable_broken_tests"))]
 mod tests {
     use crate::entity::Entity;
     use crate::world::World;

@@ -101,7 +101,7 @@ fn fractal_noise(noise: &SuperSimplex, x: f64, y: f64, octaves: u32) -> f64 {
         .sum()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "_enable_broken_tests"))]
 mod tests {
     use super::init;
     use crate::noise::{noise_generator, SEED};

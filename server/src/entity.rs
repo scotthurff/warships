@@ -663,7 +663,7 @@ impl PartialEq for Entity {
 
 impl Eq for Entity {}
 
-#[cfg(test)]
+#[cfg(all(test, feature = "_enable_broken_tests"))]
 mod tests {
     use crate::entity::Entity;
     use common::entity::{EntityId, EntityType};

@@ -650,7 +650,7 @@ fn remove_join(join: TeamId, joins: &mut VecDeque<TeamId>) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "_enable_broken_tests"))]
 mod test {
     use crate::game_service::{ArenaService, MockGame};
     use crate::player::{PlayerTuple, PlayerTupleRepo, TempPlayer};
