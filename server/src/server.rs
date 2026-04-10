@@ -3,7 +3,7 @@
 
 use crate::bot::*;
 use crate::entity_extension::EntityExtension;
-use crate::match_state::{BoatSnapshot, MatchEvent, MatchState, Team};
+use crate::match_state::{ArenaLayout, BoatSnapshot, MatchEvent, MatchState, Team};
 use crate::player::*;
 use crate::protocol::*;
 use crate::team::TeamRepo;
@@ -46,6 +46,84 @@ pub struct Server {
 }
 
 impl Server {
+    /// Build a `BoatSnapshot` for every alive boat whose player has a
+    /// Blue/Red team assignment. This is the iterator that `match_state.tick`
+    /// consumes to count ships inside each base and advance capture clocks.
+    ///
+    /// Returns a `Vec` (not a borrow) so the caller can free the shared
+    /// `&self.player` / `&self.world` borrows before mutably borrowing
+    /// `&mut self.match_state` for the tick call.
+    fn collect_boat_snapshots(&self) -> Vec<BoatSnapshot> {
+        let world = &self.world;
+        self.player
+            .iter_borrow()
+            .filter_map(|p| {
+                let team = p.match_team?;
+                match p.status {
+                    Status::Alive { entity_index, .. } => {
+                        let entity = &world.entities[entity_index];
+                        Some(BoatSnapshot {
+                            pos: entity.transform.position,
+                            team,
+                            alive: true,
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Credit every player on `by_team` who has an alive boat inside the
+    /// captured base with +1 `captures` and a share of CAPTURE_POINTS toward
+    /// their personal_points. Called when `match_state` emits a
+    /// `BaseCaptured` event.
+    ///
+    /// `at_team` identifies which base was captured (Blue base captured by
+    /// Red, or Red base captured by Blue).
+    fn award_capture_stats(&mut self, by_team: Team, at_team: Team) {
+        use crate::match_state::CAPTURE_POINTS;
+
+        let base_pos = match at_team {
+            Team::Blue => ArenaLayout::DEFAULT.blue_base,
+            Team::Red => ArenaLayout::DEFAULT.red_base,
+        };
+        let base_radius_sq =
+            ArenaLayout::DEFAULT.base_radius * ArenaLayout::DEFAULT.base_radius;
+
+        // First pass: collect PlayerIds of every contributing boat so we
+        // know how many ships to split CAPTURE_POINTS across. Uses an
+        // immutable borrow of self.player + self.world.
+        let mut contributors: Vec<PlayerId> = Vec::new();
+        {
+            let world = &self.world;
+            for p in self.player.iter_borrow() {
+                if p.match_team != Some(by_team) {
+                    continue;
+                }
+                if let Status::Alive { entity_index, .. } = p.status {
+                    let pos = world.entities[entity_index].transform.position;
+                    if pos.distance_squared(base_pos) <= base_radius_sq {
+                        contributors.push(p.player_id);
+                    }
+                }
+            }
+        }
+
+        if contributors.is_empty() {
+            return;
+        }
+        let per_ship_points = CAPTURE_POINTS / contributors.len() as u32;
+
+        // Second pass: mutably credit each contributor.
+        for id in contributors {
+            if let Some(mut p) = self.player.borrow_player_mut(id) {
+                p.match_stats.captures += 1;
+                p.match_stats.personal_points += per_ship_points;
+            }
+        }
+    }
+
     /// Assign Blue/Red teams to every player at match start.
     ///
     /// Humans (in CTA mode) always go Blue. Bots fill the remaining
@@ -351,8 +429,14 @@ impl ArenaService for Server {
 
         self.counter = self.counter.next();
 
+        // Capture kill events emitted during world.update so we can award
+        // team points + per-player kill stats after the borrow releases.
+        // (match_state.record_kill and player.match_stats need mutable
+        //  access to self, which isn't possible inside the callback.)
+        let mut pending_kills: Vec<(PlayerId, PlayerId)> = Vec::new();
         self.world.update(Ticks::ONE, &mut |killer, dead| {
-            context.tally_victory(killer, dead)
+            context.tally_victory(killer, dead);
+            pending_kills.push((killer, dead));
         });
 
         // ─── Capture the Area match tick ─────────────────────────────────
@@ -366,6 +450,12 @@ impl ArenaService for Server {
             .any(|p| p.game_mode == GameMode::CaptureTheArea);
 
         if any_cta_player {
+            // Clamp the world to the fixed CTA arena so edge damage kicks
+            // in beyond 1200 units and the client can draw a visible wall.
+            // mk48's World::update recomputes a dynamic radius based on
+            // boat visual area each tick; we stomp that value back down.
+            self.world.radius = ArenaLayout::DEFAULT.arena_radius;
+
             // First CTA player arrived? Kick the match off and assign
             // teams to every player (human = Blue, bots split 4B/5R).
             if matches!(
@@ -384,13 +474,36 @@ impl ArenaService for Server {
                 self.assign_late_joiners();
             }
 
-            // Phase 1: empty boat snapshots — capture mechanics land in
-            // Phase 2 (task #29 assigns teams, Phase 2 builds the iterator
-            // from `self.player` + `self.world.entities`).
+            // Process kills recorded during world.update: increment the
+            // killer's per-player kill stat + award KILL_POINTS to their
+            // team via match_state.record_kill. Only kills by team-assigned
+            // players (i.e. CTA participants) count. Free-roam kills are
+            // ignored here and never reach the scoreboard.
+            for (killer_id, _dead_id) in pending_kills.drain(..) {
+                let team_to_award = if let Some(mut killer) =
+                    self.player.borrow_player_mut(killer_id)
+                {
+                    if let Some(team) = killer.match_team {
+                        killer.match_stats.kills += 1;
+                        killer.match_stats.personal_points += crate::match_state::KILL_POINTS;
+                        Some(team)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                // Release the player borrow before touching match_state.
+                if let Some(team) = team_to_award {
+                    self.match_state.record_kill(team);
+                }
+            }
+
+            // Walk every alive, team-assigned boat into a snapshot vec
+            // before mutably borrowing `match_state` for the tick.
+            let snapshots = self.collect_boat_snapshots();
             let dt = Duration::from_secs_f32(Ticks::PERIOD_SECS);
-            let events = self
-                .match_state
-                .tick(dt, std::iter::empty::<BoatSnapshot>());
+            let events = self.match_state.tick(dt, snapshots.into_iter());
 
             for event in events {
                 match event {
@@ -405,6 +518,10 @@ impl ArenaService for Server {
                             "match {}: {:?} captured {:?} base",
                             self.match_state.match_id, by, at
                         );
+                        // Every friendly ship inside the captured base at
+                        // the moment of capture gets +1 captures + a share
+                        // of CAPTURE_POINTS toward their personal_points.
+                        self.award_capture_stats(by, at);
                     }
                     MatchEvent::MatchEnded {
                         winner,
