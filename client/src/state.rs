@@ -6,7 +6,7 @@ use crate::interpolated_contact::InterpolatedContact;
 use common::contact::Contact;
 use common::death_reason::DeathReason;
 use common::entity::EntityId;
-use common::protocol::{TeamDto, TeamUpdate, Update};
+use common::protocol::{MatchUpdate, TeamDto, TeamUpdate, Update};
 use common::terrain::Terrain;
 use kodiak_client::{owned_into_box, owned_into_iter, Apply, PlayerId, TeamId};
 use std::collections::HashMap;
@@ -26,6 +26,8 @@ pub struct Mk48State {
     pub members: Box<[PlayerId]>,
     pub joiners: Box<[PlayerId]>,
     pub joins: Box<[TeamId]>,
+    /// Latest Capture the Area match state. `None` in Free Roam.
+    pub match_update: Option<MatchUpdate>,
 }
 
 impl Default for Mk48State {
@@ -44,6 +46,7 @@ impl Default for Mk48State {
             members: Default::default(),
             joiners: Default::default(),
             joins: Default::default(),
+            match_update: None,
         }
     }
 }
@@ -81,6 +84,7 @@ impl Apply<Update> for Mk48State {
 
         self.world_radius = update.world_radius;
         self.score = update.score;
+        self.match_update = update.match_update;
 
         for update in update.team {
             match update {

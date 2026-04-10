@@ -85,7 +85,7 @@ pub enum MatchPhase {
 
 /// Per-tick match state broadcast to clients during Capture the Area.
 /// Sent at ~2 Hz during `Playing`. Not sent in Free Roam.
-#[derive(Clone, Copy, Debug, Encode, Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct MatchUpdate {
     /// Epoch — bumps on every `reset()`. Clients discard stale packets.
     pub match_id: u32,

@@ -22,7 +22,9 @@ use common::angle::Angle;
 use common::contact::{Contact, ContactTrait};
 use common::entity::{EntityData, EntityId, EntityKind, EntitySubKind, EntityType};
 use common::guidance::Guidance;
-use common::protocol::{Command, Control, Fire, Hint, Pay, Spawn, Update, Upgrade};
+use common::protocol::{
+    Command, Control, Fire, Hint, Pay, SelectGameMode, Spawn, Update, Upgrade,
+};
 use common::ticks::Ticks;
 use common::transform::Transform;
 use common::velocity::Velocity;
@@ -1698,7 +1700,19 @@ impl GameClient for Mk48Game {
                     entity_type,
                 }));
             }
-            UiEvent::Spawn { alias, entity_type } => {
+            UiEvent::Spawn {
+                alias,
+                entity_type,
+                game_mode,
+            } => {
+                // Send the mode selection first so the server stamps the
+                // player with the correct game_mode before the Spawn arrives.
+                // In Free Roam this is a no-op on the server (default), but
+                // we send it anyway so "Quit to Title → Free Roam" can reset
+                // the mode after a Capture the Area match.
+                context.send_to_game(Command::SelectGameMode(SelectGameMode {
+                    mode: game_mode,
+                }));
                 context.send_to_game(Command::Spawn(Spawn {
                     alias: Some(alias),
                     entity_type,

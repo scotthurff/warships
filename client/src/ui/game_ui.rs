@@ -17,7 +17,7 @@ use common::altitude::Altitude;
 use common::angle::Angle;
 use common::death_reason::DeathReason;
 use common::entity::{EntityId, EntityType};
-use common::protocol::{TeamDto, TeamRequest};
+use common::protocol::{GameMode, MatchUpdate, TeamDto, TeamRequest};
 use common::velocity::Velocity;
 use kodiak_client::glam::Vec2;
 use kodiak_client::yew_router::Routable;
@@ -36,13 +36,47 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let ctw = use_ctw();
     let nexus = ctw.escaping.is_escaping();
     let gctw = use_gctw::<Mk48Game>();
-    let on_play = gctw.send_ui_event_callback.reform(|alias| UiEvent::Spawn {
-        alias,
-        entity_type: EntityType::G5,
-    });
+
+    // Currently-selected game mode on the title screen. Defaults to Free Roam.
+    // Persists across re-renders of this component.
+    let selected_mode = use_state(|| GameMode::FreeRoam);
+
+    let on_play = {
+        let mode = *selected_mode;
+        gctw.send_ui_event_callback.reform(move |alias| UiEvent::Spawn {
+            alias,
+            entity_type: EntityType::G5,
+            game_mode: mode,
+        })
+    };
+
+    let on_select_free_roam = {
+        let selected_mode = selected_mode.clone();
+        Callback::from(move |_: MouseEvent| selected_mode.set(GameMode::FreeRoam))
+    };
+    let on_select_cta = {
+        let selected_mode = selected_mode.clone();
+        Callback::from(move |_: MouseEvent| selected_mode.set(GameMode::CaptureTheArea))
+    };
 
     let margin = "0.5rem";
     let status = props.status.clone();
+
+    // Mode-selector tile styling (computed outside html! since Yew's macro
+    // doesn't allow bare `let` statements inside its JSX block).
+    let free_selected = *selected_mode == GameMode::FreeRoam;
+    let cta_selected = *selected_mode == GameMode::CaptureTheArea;
+    let tile_base = "display: flex; flex-direction: column; align-items: center; justify-content: center; width: 220px; height: 140px; padding: 20px; background: rgba(15,23,42,0.92); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);";
+    let free_style = if free_selected {
+        format!("{} color: #4ADE80; border: 2px solid #22C55E; border-left: 4px solid #22C55E;", tile_base)
+    } else {
+        format!("{} color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B;", tile_base)
+    };
+    let cta_style = if cta_selected {
+        format!("{} color: #FCD34D; border: 2px solid #EAB308; border-left: 4px solid #EAB308;", tile_base)
+    } else {
+        format!("{} color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B;", tile_base)
+    };
 
     const SHOOT_HINT: &str = "First, select an available weapon. Then, click in the direction to fire. If you hold the click for too long, you won't shoot.";
     const HINTS: &[(&str, &[&str])] = &[
@@ -57,6 +91,18 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     html! {
         <>
             if matches!(status, UiStatus::Playing(_) | UiStatus::Respawning(_)) && !nexus {
+                // Capture the Area HUD — timer + scores, top-middle.
+                // Only renders when the server is sending match updates
+                // (i.e., the player is in CTA mode).
+                if let Some(m) = props.match_update {
+                    <Positioner id="match_hud" position={Position::TopMiddle{margin: "0.5rem"}}>
+                        <div style="display: flex; align-items: center; gap: 20px; padding: 10px 18px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 3px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 16px; font-weight: 700; letter-spacing: 2px; color: #E2E8F0; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
+                            <div style="color: #60A5FA;">{format!("BLUE {}", m.blue_score)}</div>
+                            <div style="color: #FCD34D;">{format_match_clock(&m)}</div>
+                            <div style="color: #F87171;">{format!("{} RED", m.red_score)}</div>
+                        </div>
+                    </Positioner>
+                }
                 if let UiStatus::Playing(playing) = status {
                     <Positioner id="status" position={Position::BottomMiddle{margin: "0"}} max_width="45%">
                         <StatusOverlay
@@ -81,6 +127,17 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                     <Positioner id="spawn" position={Position::Center}>
                         <div style="display: flex; flex-direction: column; align-items: center; gap: 28px; min-width: 50%;">
                             {logo()}
+                            // Mode selector — two big tiles
+                            <div style="display: flex; gap: 16px;">
+                                <div style={free_style.clone()} onclick={on_select_free_roam}>
+                                    <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Free Roam"}</div>
+                                    <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"Explore + destroy"}</div>
+                                </div>
+                                <div style={cta_style.clone()} onclick={on_select_cta}>
+                                    <div style="font-size: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;">{"Capture the Area"}</div>
+                                    <div style="margin-top: 10px; font-size: 11px; font-weight: 400; letter-spacing: 1px; color: #64748B;">{"5v5 timed match"}</div>
+                                </div>
+                            </div>
                             // Difficulty selector — wargame style
                             <div style="display: flex; gap: 10px;">
                                 <button
@@ -183,6 +240,26 @@ impl RoutableExt for Mk48Route {
     }
 }
 
+/// Format the current match phase into a user-readable string.
+/// Phase 1 stub — a nicer HUD with countdown animation lands in Phase 2.
+fn format_match_clock(m: &MatchUpdate) -> String {
+    use common::protocol::MatchPhase;
+    match m.phase {
+        MatchPhase::Waiting => "WAITING".to_string(),
+        MatchPhase::Countdown => {
+            let s = (m.remaining_ms + 999) / 1000;
+            format!("{}", s.max(1))
+        }
+        MatchPhase::Playing => {
+            let total_s = m.remaining_ms / 1000;
+            let min = total_s / 60;
+            let sec = total_s % 60;
+            format!("{:02}:{:02}", min, sec)
+        }
+        MatchPhase::Ended { .. } => "ENDED".to_string(),
+    }
+}
+
 /// State of UI inputs.
 pub struct UiState {
     pub active: bool,
@@ -223,6 +300,10 @@ pub enum UiEvent {
     Spawn {
         alias: PlayerAlias,
         entity_type: EntityType,
+        /// Which game mode to spawn into. The game dispatcher sends a
+        /// `SelectGameMode` command before `Spawn` so the server knows
+        /// which mode the player opted into.
+        game_mode: GameMode,
     },
     Submerge(bool),
     Upgrade(EntityType),
@@ -249,6 +330,8 @@ pub struct UiProps {
     pub joiners: Box<[PlayerId]>,
     pub joins: Box<[TeamId]>,
     pub touch_screen: bool,
+    /// Latest Capture the Area match state. `None` in Free Roam.
+    pub match_update: Option<MatchUpdate>,
 }
 
 /// Mutually exclusive statuses.
@@ -294,6 +377,7 @@ impl Mk48Game {
             joiners: context.state.game.joiners.clone(),
             joins: context.state.game.joins.clone(),
             touch_screen: context.mouse.touch_screen,
+            match_update: context.state.game.match_update,
         };
 
         context.set_ui_props(props, in_game);
