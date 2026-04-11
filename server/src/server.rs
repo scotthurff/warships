@@ -624,11 +624,32 @@ impl ArenaService for Server {
                 // Only team-assigned players show up (humans + assigned bots),
                 // so the scoreboard never lists spectators.
                 let my_player_id = player_tuple.borrow_player().player_id;
+                let world = &self.world;
                 let mut players: Vec<PlayerMatchStatsDto> = self
                     .player
                     .iter_borrow()
                     .filter_map(|p| {
                         let team = p.match_team?;
+                        // Look up the player's live world position via
+                        // their entity, or fall back to the team base
+                        // if they're dead/unspawned (so the minimap
+                        // has a sensible placeholder).
+                        let (pos, alive) = match p.status {
+                            Status::Alive { entity_index, .. } => {
+                                (world.entities[entity_index].transform.position, true)
+                            }
+                            _ => {
+                                let base = match team {
+                                    crate::match_state::Team::Blue => {
+                                        crate::match_state::ArenaLayout::DEFAULT.blue_base
+                                    }
+                                    crate::match_state::Team::Red => {
+                                        crate::match_state::ArenaLayout::DEFAULT.red_base
+                                    }
+                                };
+                                (base, false)
+                            }
+                        };
                         Some(PlayerMatchStatsDto {
                             player_id: p.player_id,
                             alias: p.alias,
@@ -638,6 +659,8 @@ impl ArenaService for Server {
                             captures: p.match_stats.captures,
                             personal_points: p.match_stats.personal_points,
                             is_you: p.player_id == my_player_id,
+                            pos,
+                            alive,
                         })
                     })
                     .collect();

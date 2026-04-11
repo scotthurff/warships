@@ -253,15 +253,18 @@ impl CommandTrait for Spawn {
         boat.transform.position = spawn_position;
         boat.transform.direction = desired_direction;
         boat.guidance.direction_target = desired_direction;
-        // In CTA, cap the retry wander radius TIGHTLY. 350 units is
-        // base_radius (250) + 100 margin — spawns stay visibly "at"
-        // the base. If the retry loop can't find a valid position in
-        // that ring (e.g., terrain fully covering the base), the
-        // spawn returns error and the respawn overlay retries. Better
-        // to fail loud than to silently drop the player at the arena
-        // edge.
+        // In CTA, cap the retry wander radius based on the ship's
+        // own size. A small destroyer fits in a tight 350-unit ring,
+        // but a carrier (Essex is 265m long → radius ~132m) needs
+        // way more clearance — can_spawn enforces a threshold that
+        // scales with ship radius, and the retry loop exhausts all
+        // attempts trying to squeeze a carrier into a destroyer-sized
+        // ring. Formula: base_radius + ship_radius * 3, floored at
+        // 350 so small ships still spawn tightly at the base.
         let max_distance_override = if cta_team.is_some() {
-            Some(350.0)
+            let ship_radius = self.entity_type.data().radius;
+            let cap = ArenaLayout::DEFAULT.base_radius + ship_radius * 3.0;
+            Some(cap.max(350.0))
         } else {
             None
         };

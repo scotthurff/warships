@@ -85,7 +85,7 @@ pub enum MatchPhase {
 
 /// Per-tick match state broadcast to clients during Capture the Area.
 /// Sent at ~2 Hz during `Playing`. Not sent in Free Roam.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct MatchUpdate {
     /// Epoch — bumps on every `reset()`. Clients discard stale packets.
     pub match_id: u32,
@@ -105,7 +105,7 @@ pub struct MatchUpdate {
 }
 
 /// Per-player stats DTO broadcast inside `MatchUpdate.players`.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Debug, PartialEq, Encode, Decode)]
 pub struct PlayerMatchStatsDto {
     /// Player id — lets the client map from `Contact.player_id()` to team
     /// for ship coloring, minimap markers, etc.
@@ -119,6 +119,13 @@ pub struct PlayerMatchStatsDto {
     /// `true` if this DTO represents the local human player (not a bot).
     /// Lets the client highlight their own row.
     pub is_you: bool,
+    /// Current world position of this player's boat. Used by the CTA
+    /// minimap to render every team-assigned ship regardless of whether
+    /// it's within the local player's visual range. `Vec2::ZERO` when
+    /// the player is dead / unspawned.
+    pub pos: Vec2,
+    /// Whether the player currently has an alive boat.
+    pub alive: bool,
 }
 
 /// Updates for terrain chunks.

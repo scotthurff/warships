@@ -562,51 +562,24 @@ impl Mk48Game {
     pub(crate) fn update_ui_props(&self, context: &mut ClientContext<Self>, status: UiStatus) {
         let in_game = !matches!(status, UiStatus::Spawning);
 
-        // Build the minimap snapshot: one entry per alive boat in the
-        // client's contact list. Every boat appears, even if we can't
-        // cross-reference its player_id against match_update.players —
-        // in that case the dot renders gray. This is important because
-        // `player_id()` can legitimately be None for some contacts, and
-        // bots occasionally take a tick to show up in the players DTO.
-        // The strict filter was dropping the player's own ship.
-        let minimap_entries: Vec<MinimapEntry> = if context
-            .state
-            .game
-            .match_update
-            .is_some()
+        // Build the minimap snapshot from match_update.players, NOT from
+        // state.game.contacts. The contacts list is already filtered by
+        // the server to the local player's visual range, so ships on
+        // the far side of the arena never appear in it — which meant
+        // the minimap only ever showed nearby ships, defeating the
+        // whole point of having a minimap. match_update.players carries
+        // position + team + is_you for EVERY team-assigned boat in the
+        // match, full-map visibility guaranteed.
+        let minimap_entries: Vec<MinimapEntry> = if let Some(m) =
+            context.state.game.match_update.as_ref()
         {
-            use common::contact::ContactTrait;
-            let match_update = context.state.game.match_update.as_ref().unwrap();
-            let my_entity_id = context.state.game.entity_id;
-            context
-                .state
-                .game
-                .contacts
-                .values()
-                .filter_map(|ic| {
-                    let contact = &ic.view;
-                    if !contact.is_boat() {
-                        return None;
-                    }
-                    // Team lookup is best-effort — None means "render
-                    // gray", not "drop".
-                    let team = contact.player_id().and_then(|pid| {
-                        match_update
-                            .players
-                            .iter()
-                            .find(|p| p.player_id == pid)
-                            .map(|p| p.team)
-                    });
-                    // Mark as "you" via entity id rather than player id —
-                    // mk48 keys the local player's own ship off entity_id
-                    // and `player_id()` on a self-contact isn't always
-                    // populated the way we'd hope.
-                    let is_you = my_entity_id == Some(contact.id());
-                    Some(MinimapEntry {
-                        pos: contact.transform().position,
-                        team,
-                        is_you,
-                    })
+            m.players
+                .iter()
+                .filter(|p| p.alive)
+                .map(|p| MinimapEntry {
+                    pos: p.pos,
+                    team: Some(p.team),
+                    is_you: p.is_you,
                 })
                 .collect()
         } else {

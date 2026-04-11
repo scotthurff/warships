@@ -401,30 +401,47 @@ impl kodiak_server::Bot<Server> for Bot {
             .unwrap()
             .update(update, player_id, settings);
 
-        // Check the match state so we can behave correctly in CTA:
-        //  - if the match is running but this bot has no team, quit
-        //    (the assign_late_joiners caps are full — we shouldn't
-        //    linger as a ghost entity in the arena).
-        //  - if the bot has a team, its spawn uses the fleet loadout.
         let match_running = matches!(
             server.match_state.phase,
             common::protocol::MatchPhase::Countdown
                 | common::protocol::MatchPhase::Playing
         );
 
+        // During an active CTA match, bots must NEVER quit. The engine
+        // replaces quit bots with fresh ones (match_team = None), whose
+        // Bot::update then immediately quits if we also had a "no team
+        // → quit" check — producing an infinite quit/replace cycle that
+        // looked to the player like red ships spontaneously disappearing
+        // every couple of ticks. Instead, rewrite any Quit action to a
+        // plain Spawn command. The real team assignment happens further
+        // down the pipeline in player_command's interceptor via
+        // assign_late_joiners.
+        let action = if matches!(action, BotAction::Quit) && match_running {
+            BotAction::Some(Command::Spawn(Spawn {
+                alias: Some(random_bot_name()),
+                entity_type: EntityType::spawn_options(0, true)
+                    .choose(&mut thread_rng())
+                    .expect("ship pool must not be empty"),
+            }))
+        } else {
+            action
+        };
+
         // Post-process: in Capture the Area, the player's match_team is
         // set and selected_loadout holds the fleet ship this bot should
         // use. Override the bot's randomly-picked spawn ship with the
         // team loadout so both sides stay balanced.
+        //
+        // Bots with no team (fresh replacements joined mid-match) skip
+        // the entity_type override and let their random ship ride — the
+        // player_command interceptor will call assign_late_joiners and
+        // populate match_team + selected_loadout BEFORE Spawn::apply,
+        // so by the time the spawn actually lands, the fleet loadout
+        // override in world_inbound.rs's ship_radius logic already sees
+        // the correct ship.
         match action {
             BotAction::Some(Command::Spawn(mut spawn)) => {
                 let p = player_tuple.borrow_player();
-                if match_running && p.match_team.is_none() {
-                    // Can't spawn in a running CTA match without a team —
-                    // the team caps are full. Quit so the engine removes
-                    // us and (hopefully) stops cycling.
-                    return BotAction::Quit;
-                }
                 if p.match_team.is_some() {
                     if let Some(ship) = p.selected_loadout {
                         spawn.entity_type = ship;
