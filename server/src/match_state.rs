@@ -224,7 +224,12 @@ impl MatchState {
         boats: impl IntoIterator<Item = BoatSnapshot>,
         events: &mut Vec<MatchEvent>,
     ) {
-        // Count living ships in each base, grouped by team
+        // Count living ships in each base, grouped by team.
+        //
+        // Recently-respawned boats are EXCLUDED when they'd otherwise
+        // count as defenders in their own base. A killed Red bot
+        // respawning at the Red base shouldn't pause a Blue player's
+        // capture clock — the bot's AI hasn't had time to move out yet.
         let mut blue_at_blue_base: u32 = 0;
         let mut red_at_blue_base: u32 = 0;
         let mut blue_at_red_base: u32 = 0;
@@ -237,10 +242,21 @@ impl MatchState {
             let at_blue = boat.pos.distance(self.layout.blue_base) <= self.layout.base_radius;
             let at_red = boat.pos.distance(self.layout.red_base) <= self.layout.base_radius;
             match (boat.team, at_blue, at_red) {
-                (Team::Blue, true, _) => blue_at_blue_base += 1,
+                (Team::Blue, true, _) => {
+                    // Defender in own base: skipped during spawn grace
+                    // period. Attackers (enemy team in own base) are
+                    // still counted below.
+                    if !boat.just_respawned {
+                        blue_at_blue_base += 1;
+                    }
+                }
                 (Team::Red, true, _) => red_at_blue_base += 1,
                 (Team::Blue, _, true) => blue_at_red_base += 1,
-                (Team::Red, _, true) => red_at_red_base += 1,
+                (Team::Red, _, true) => {
+                    if !boat.just_respawned {
+                        red_at_red_base += 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -328,6 +344,11 @@ pub struct BoatSnapshot {
     pub pos: Vec2,
     pub team: Team,
     pub alive: bool,
+    /// True if this boat was spawned within the capture grace period
+    /// (~3 seconds). Such boats don't count as defenders in their own
+    /// team's base — otherwise killed bots respawning at home would
+    /// keep pausing the attacker's capture clock forever.
+    pub just_respawned: bool,
 }
 
 /// Events emitted during MatchState::tick(). The caller handles side effects
@@ -355,6 +376,7 @@ mod tests {
             pos,
             team,
             alive: true,
+            just_respawned: false,
         }
     }
 
@@ -511,6 +533,7 @@ mod tests {
             pos: ArenaLayout::DEFAULT.red_base,
             team: Team::Blue,
             alive: false,
+            just_respawned: false,
         };
         for _ in 0..30 {
             s.tick(Duration::from_secs(1), std::iter::once(dead));

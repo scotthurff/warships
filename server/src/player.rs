@@ -131,6 +131,12 @@ pub struct TempPlayer {
     pub selected_loadout: Option<EntityType>,
     /// Stats for the current match, reset on Play Again.
     pub match_stats: PlayerMatchStats,
+    /// Wall-clock time of the most recent successful spawn. Used by the
+    /// CTA capture logic to skip recently-respawned boats when counting
+    /// defenders (so killed bots don't pause the capture clock while
+    /// they sit at their own base for a couple of seconds after
+    /// respawning).
+    pub spawn_time: Option<Instant>,
     /// Flags set each tick based on inputs.
     /// Only cleared if player has a boat.
     /// Cleared once when the boat is spawn and once in each physics tick.
@@ -154,6 +160,7 @@ impl TempPlayer {
             match_team: None,
             selected_loadout: None,
             match_stats: PlayerMatchStats::default(),
+            spawn_time: None,
             flags: Flags::default(),
             hint: Hint::default(),
             status: Status::Spawning,

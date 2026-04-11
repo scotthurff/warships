@@ -62,6 +62,11 @@ impl CommandTrait for Spawn {
         // Record the ship class in match stats so the end-of-match table
         // can show which ship each player used.
         player.match_stats.ship_class = Some(self.entity_type);
+        // Stamp the spawn time so the CTA capture logic can give
+        // recently-respawned boats a grace period before they count as
+        // defenders. Without this, a killed bot respawning at its own
+        // base pauses the attacker's capture clock for several seconds.
+        player.spawn_time = Some(std::time::Instant::now());
 
         drop(player);
         let player = player_tuple.borrow_player();

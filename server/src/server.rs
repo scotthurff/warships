@@ -181,6 +181,8 @@ impl Server {
     /// `&self.player` / `&self.world` borrows before mutably borrowing
     /// `&mut self.match_state` for the tick call.
     fn collect_boat_snapshots(&self) -> Vec<BoatSnapshot> {
+        const SPAWN_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+        let now = std::time::Instant::now();
         let world = &self.world;
         self.player
             .iter_borrow()
@@ -189,10 +191,15 @@ impl Server {
                 match p.status {
                     Status::Alive { entity_index, .. } => {
                         let entity = &world.entities[entity_index];
+                        let just_respawned = p
+                            .spawn_time
+                            .map(|t| now.duration_since(t) < SPAWN_GRACE)
+                            .unwrap_or(false);
                         Some(BoatSnapshot {
                             pos: entity.transform.position,
                             team,
                             alive: true,
+                            just_respawned,
                         })
                     }
                     _ => None,
@@ -429,6 +436,43 @@ impl ArenaService for Server {
             Command::QuitToTitle(_) => {
                 self.handle_quit_to_title(player_id);
                 return None;
+            }
+            // Spawn requests run BEFORE the next Server::tick() cycle,
+            // so the first-tick team assignment hasn't happened yet.
+            // Force a CTA bootstrap here if the commanding player is in
+            // CTA mode, or if the match is already active — that way
+            // the Spawn::apply call below sees a player.match_team and
+            // routes the spawn to the team base instead of the free-
+            // roam path that scatters them all over the map.
+            Command::Spawn(_) => {
+                let should_run_cta = {
+                    let p = self.player.borrow_player(player_id);
+                    let caller_is_cta = p
+                        .as_ref()
+                        .map(|p| p.game_mode == GameMode::CaptureTheArea)
+                        .unwrap_or(false);
+                    let match_running = matches!(
+                        self.match_state.phase,
+                        MatchPhase::Countdown | MatchPhase::Playing
+                    );
+                    caller_is_cta || match_running
+                };
+                if should_run_cta {
+                    if matches!(
+                        self.match_state.phase,
+                        MatchPhase::Waiting | MatchPhase::Ended { .. }
+                    ) {
+                        self.match_state.start_match();
+                        self.assign_match_teams();
+                        self.clear_statics();
+                        info!(
+                            "match {} started (via Spawn)",
+                            self.match_state.match_id
+                        );
+                    } else {
+                        self.assign_late_joiners();
+                    }
+                }
             }
             _ => {}
         }
