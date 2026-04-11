@@ -42,19 +42,43 @@
         h1 {
             font-family: 'Black Ops One', 'Menlo', monospace !important;
         }
+
+        /* ── iPad touch fixes ─────────────────────────────────────────
+           Kodiak's app.rs sets `touch-action: none` on <body>, which
+           on iOS Safari suppresses synthesized click events from taps
+           on plain <div> elements (including the Curtain backdrop that
+           wraps every NexusDialog — so the Settings menu traps the
+           user: backdrop dismiss never fires).
+
+           `touch-action: manipulation` preserves the no-zoom / no-
+           delay behavior we actually want but lets taps synthesize
+           clicks normally. iOS-specific `!important` beats stylist-
+           yew's global_style cascade. */
+        body {
+            touch-action: manipulation !important;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+        }
+
+        /* Every tap on <button> in iOS Safari flashes a translucent
+           light gray overlay on the hit target — over our dark
+           wargame panels it reads as a white/washed-out flash. Show
+           no highlight; the :active filter in button styles is a
+           sufficient visual ack. */
+        button, a, [role="button"], input[type="button"], input[type="submit"] {
+            -webkit-tap-highlight-color: transparent !important;
+        }
     </style>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
     <script>
-        // Prevent pinch-zoom and double-tap zoom on iPad Safari
+        // Prevent pinch-zoom on iPad Safari. Double-tap-zoom is
+        // suppressed at the CSS layer via `touch-action: manipulation`
+        // (see <style> above) instead of calling preventDefault() on
+        // the second touchend — the JS approach also swallows the
+        // synthesized click event, which broke rapid-fire button taps.
         document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
         document.addEventListener('gesturechange', function(e) { e.preventDefault(); });
         document.addEventListener('gestureend', function(e) { e.preventDefault(); });
-        var lastTouchEnd = 0;
-        document.addEventListener('touchend', function(e) {
-            var now = Date.now();
-            if (now - lastTouchEnd <= 300) { e.preventDefault(); }
-            lastTouchEnd = now;
-        }, { passive: false });
     </script>
     <title>WARSHIPS</title>
     <meta name="description" content="WARSHIPS — Naval combat game. Command warships, fire torpedoes, and sink the enemy fleet.">
