@@ -81,10 +81,10 @@ impl Server {
             })
             .collect();
         for idx in dead_indices {
-            self.world.remove(
-                idx,
-                common::death_reason::DeathReason::Debug("play again reset".to_string()),
-            );
+            // Boats require a non-Debug DeathReason — Debug panics in
+            // on_world_remove for boat-kind entities. Unknown is the
+            // standard "admin removal" fit.
+            self.world.remove(idx, common::death_reason::DeathReason::Unknown);
         }
 
         // Zero out every CTA player's match_stats so the next match
@@ -377,12 +377,10 @@ impl Server {
             })
             .collect();
         for idx in to_remove {
-            self.world.remove(
-                idx,
-                common::death_reason::DeathReason::Debug(
-                    "cta match start: clearing pre-match boats".to_string(),
-                ),
-            );
+            // DeathReason::Debug is only valid for non-boat entities —
+            // the boat removal path in world_mutation.rs debug_asserts
+            // against it. Use Unknown for administrative removals.
+            self.world.remove(idx, common::death_reason::DeathReason::Unknown);
         }
         // world.remove may leave status as Dead; force Spawning so the
         // bot AI emits a fresh Spawn on its next update.
