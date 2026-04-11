@@ -63,11 +63,14 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
 
     let has_selection = props.selected.is_some();
 
-    // Container — wargame panel frame. Sized generously so the ship
-    // grid gets at least 4 columns on a typical desktop and the detail
-    // panel has room for stats.
+    // Container — wargame panel frame. Width responsive so the picker
+    // fits narrow browser windows without clipping the detail panel.
+    // `width: min(1040px, calc(100vw - 40px))` targets 1040px on wide
+    // screens and shrinks to 20px-margin of the viewport on narrow
+    // ones. overflow-x: auto is a safety net if inner content still
+    // exceeds the available space (e.g. on very small phones).
     html! {
-        <div style="display: flex; flex-direction: column; align-items: stretch; gap: 24px; padding: 36px 48px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 4px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; box-shadow: 0 8px 32px rgba(0,0,0,0.6); min-width: 1040px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; flex-direction: column; align-items: stretch; gap: 24px; padding: 36px 48px; background: rgba(15,23,42,0.92); border: 1px solid rgba(148,163,184,0.4); border-left: 4px solid #4ADE80; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; box-shadow: 0 8px 32px rgba(0,0,0,0.6); width: min(1040px, calc(100vw - 40px)); max-height: 90vh; overflow-y: auto; overflow-x: auto; box-sizing: border-box;">
 
             // Header row: back button + title
             <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -193,23 +196,31 @@ fn render_detail_panel(selected: Option<EntityType>) -> Html {
             let stats = ShipStats::from_data(data);
 
             html! {
-                <div style="display: grid; grid-template-columns: minmax(260px, 2fr) 5fr; gap: 28px; padding: 24px 28px; background: rgba(15,23,42,0.55); border: 1px solid rgba(74,222,128,0.3); border-left: 3px solid #4ADE80; border-radius: 2px;">
+                // minmax(0, ...) lets both columns shrink below their
+                // intrinsic content width instead of forcing the
+                // container wider than its parent. Without this the
+                // sprite + "SELECT YOUR SHIP" header + stat grid add up
+                // to >1040px on some levels and force a horizontal
+                // scroll that hides the detail panel's left edge.
+                <div style="display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr); gap: 24px; padding: 24px 28px; background: rgba(15,23,42,0.55); border: 1px solid rgba(74,222,128,0.3); border-left: 3px solid #4ADE80; border-radius: 2px; min-width: 0;">
                     // Left column: name + class + big sprite
-                    <div style="display: flex; flex-direction: column; gap: 12px;">
-                        <div>
-                            <div style="color: #FCD34D; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
+                    <div style="display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: hidden;">
+                        <div style="min-width: 0;">
+                            <div style="color: #FCD34D; font-size: 24px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.6); word-break: break-word;">
                                 {data.label}
                             </div>
                             <div style="margin-top: 4px; color: #94A3B8; font-size: 12px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase;">
                                 {format!("Level {} {}", data.level, subkind_label(data.sub_kind))}
                             </div>
                         </div>
-                        <div style="display: flex; align-items: center; justify-content: center; padding: 8px; background: rgba(15,23,42,0.35); border-radius: 2px; min-height: 100px; zoom: 0.9;">
+                        <div style="display: flex; align-items: center; justify-content: center; padding: 8px; background: rgba(15,23,42,0.35); border-radius: 2px; min-height: 100px; zoom: 0.75; overflow: hidden;">
                             <Sprite entity_type={ship}/>
                         </div>
                     </div>
-                    // Right column: stat grid (3 columns × up to 4 rows)
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 28px; align-content: start;">
+                    // Right column: stat grid. minmax(0, 1fr) on each
+                    // cell keeps the stat columns from stretching the
+                    // parent grid when labels are long.
+                    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 20px; align-content: start; min-width: 0;">
                         { render_stat("Speed",      &format!("{:.0} kn", stats.speed_knots)) }
                         { render_stat("Health",     &format!("{:.0}", stats.health)) }
                         { render_stat("Length",     &format!("{:.0} m", stats.length_m)) }
