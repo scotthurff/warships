@@ -35,6 +35,14 @@ pub struct Bot {
     spawned_at_least_once: bool,
     /// The value of submerge previously sent.
     was_submerging: bool,
+    /// Player IDs of CTA teammates (same match_team). Refilled per-tick by
+    /// the outer trait. The inner update treats these as friendly so the
+    /// bot doesn't try to attack its own side.
+    cta_teammate_ids: Vec<PlayerId>,
+    /// Where the bot wants to move toward in CTA — usually the enemy base
+    /// for offense, or own base if it's being captured (defense).
+    /// `None` in Free Roam.
+    cta_movement_target: Option<Vec2>,
 }
 
 impl Default for Bot {
@@ -46,20 +54,33 @@ impl Default for Bot {
             rng.gen_range(1..=EntityData::MAX_BOAT_LEVEL)
         }
 
-        // Tune bot params based on difficulty
-        let (max_aggro, aim_radius, level_cap, speed_mult, fire_cap) = match difficulty {
-            common::Difficulty::Captain => (0.04, 25.0, 5, 0.65, 0.4),
-            common::Difficulty::Admiral => (0.1, 10.0, 8, 0.8, 1.0),
-            common::Difficulty::FleetCommander => (0.2, 3.0, 10, 0.9, 1.0),
+        // Tune bot params based on difficulty.
+        //
+        // Per-difficulty tuple is (max_aggro, aim_radius, level_cap,
+        // speed_mult, fire_cap). Bumped substantially across the board
+        // — the previous values were so passive (Captain max_aggro
+        // 0.04 = 4% fire chance) that bots felt like idle decorations.
+        // CTA needs bots that actually engage.
+        let (max_aggro, aim_radius, level_cap, _speed_mult, _fire_cap) = match difficulty {
+            common::Difficulty::Captain => (0.30f32, 12.0f32, 6u8, 0.80f32, 0.5f32),
+            common::Difficulty::Admiral => (0.50f32, 6.0f32, 9u8, 0.88f32, 1.0f32),
+            common::Difficulty::FleetCommander => (0.75f32, 2.0f32, 10u8, 0.95f32, 1.0f32),
         };
 
         Self {
-            aggression: rng.gen::<f32>().powi(2) * max_aggro,
+            // Was rng.gen::<f32>().powi(2) * max_aggro — squaring a
+            // [0,1) random biases values toward zero, so most bots
+            // ended up with near-zero aggression. Use a uniform half-
+            // to-full range so every bot is at least decently
+            // aggressive, with some variety for personality.
+            aggression: rng.gen_range(max_aggro * 0.5..=max_aggro),
             steer_bias: rng.gen::<Angle>() * 0.1,
             aim_bias: gen_radius(&mut rng, aim_radius),
             level_ambition: random_level(&mut rng).min(random_level(&mut rng)).min(level_cap),
             spawned_at_least_once: false,
             was_submerging: false,
+            cta_teammate_ids: Vec::new(),
+            cta_movement_target: None,
         }
     }
 }
@@ -145,15 +166,40 @@ impl Bot {
                     let delta_position = contact.transform().position - boat.transform().position;
                     let distance_squared = delta_position.length_squared();
 
-                    let friendly = contact.player_id() == Some(player_id);
+                    // CTA-aware friendly check: a contact is friendly if
+                    // it's our own ship OR its player is in our cta
+                    // teammate set. Bots that share a match_team end up
+                    // in the teammate set so they stop trying to
+                    // torpedo each other.
+                    let same_self = contact.player_id() == Some(player_id);
+                    let on_my_team = contact
+                        .player_id()
+                        .map(|pid| self.cta_teammate_ids.contains(&pid))
+                        .unwrap_or(false);
+                    let friendly = same_self || on_my_team;
 
                     if contact_data.kind == EntityKind::Collectible {
                         attract(&mut movement, delta_position, distance_squared);
+                    } else if !friendly && contact_data.kind == EntityKind::Boat {
+                        // Enemy boat. Rams charge in headlong (no
+                        // engagement spring); everyone else uses a
+                        // spring at engagement range so the bot
+                        // approaches when far and orbits when close
+                        // — replacing the old "always repel" which
+                        // made bots flee from enemies.
+                        if data.sub_kind != EntitySubKind::Ram {
+                            let engagement =
+                                ((data.length + contact_data.length) * 1.5).max(200.0);
+                            spring(&mut movement, delta_position, engagement);
+                        }
                     } else if (!friendly || contact_data.kind == EntityKind::Boat)
                         && !(!friendly
                             && contact_data.kind == EntityKind::Boat
                             && data.sub_kind == EntitySubKind::Ram)
                     {
+                        // Friendly boat OR enemy non-boat (weapons,
+                        // aircraft) — repel for collision avoidance /
+                        // dodging projectiles.
                         repel(&mut movement, delta_position, distance_squared);
                     }
 
@@ -166,17 +212,11 @@ impl Bot {
                             );
                         }
                     } else if match contact_data.kind {
-                        // Don't kill smol/peaceful boats unless they get too close.
-                        EntityKind::Boat => {
-                            (contact_data.level + 1 >= data.level
-                                && !matches!(
-                                    contact_data.sub_kind,
-                                    EntitySubKind::Dredger | EntitySubKind::Icebreaker
-                                ))
-                                || contact.player_id().map(|id| id.is_bot()).unwrap_or(false)
-                                || distance_squared < 1.5 * data.radius.powi(2)
-                                || health_percent < 1.0 / 3.0
-                        }
+                        // Engage enemies aggressively. CTA teammate
+                        // detection above already filters out friendlies,
+                        // so anything reaching this branch is an enemy
+                        // worth shooting at.
+                        EntityKind::Boat => true,
                         EntityKind::Aircraft => true,
                         EntityKind::Weapon => matches!(
                             contact_data.sub_kind,
@@ -200,6 +240,22 @@ impl Bot {
                             closest_enemy = Some((contact, distance_squared));
                         }
                     }
+                }
+            }
+
+            // Push the objective: pull steadily toward the CTA movement
+            // target (enemy base for offense, own base for defense). The
+            // weight is moderate so combat priorities (enemy spring,
+            // weapon dodge, terrain repel) still dominate when an
+            // engagement is happening, but in the open the bot drives
+            // toward the objective instead of wandering.
+            if let Some(target) = self.cta_movement_target {
+                let to_target = target - boat.transform().position;
+                let dist = to_target.length();
+                if dist > 50.0 {
+                    let in_combat = closest_enemy.is_some();
+                    let weight = if in_combat { 0.8 } else { 2.5 };
+                    movement += (to_target / dist) * weight;
                 }
             }
 
@@ -327,10 +383,13 @@ impl Bot {
             let mut ret = Command::Control(Control {
                 guidance: Some(Guidance {
                     direction_target: Angle::from(movement) + self.steer_bias,
+                    // Bumped from (0.65 / 0.80 / 0.90) — old values
+                    // made bots feel sluggish. With CTA's tighter
+                    // arena, faster bots actually push the objective.
                     velocity_target: data.speed * match common::Difficulty::get_global() {
-                        common::Difficulty::Captain => 0.65,
-                        common::Difficulty::Admiral => 0.8,
-                        common::Difficulty::FleetCommander => 0.9,
+                        common::Difficulty::Captain => 0.80,
+                        common::Difficulty::Admiral => 0.88,
+                        common::Difficulty::FleetCommander => 0.95,
                     },
                 }),
                 submerge: self.was_submerging,
@@ -394,6 +453,58 @@ impl kodiak_server::Bot<Server> for Bot {
         settings: &ArenaSettingsDto<<Server as ArenaService>::ArenaSettings>,
     ) -> BotAction<<Server as ArenaService>::GameRequest> {
         let player_tuple = server.player.get(player_id).unwrap();
+
+        // Populate the bot's CTA awareness fields BEFORE running the
+        // inner update so the AI can use them for friendly checks and
+        // objective targeting. These fields are recomputed every tick
+        // so team changes / capture-state changes propagate instantly.
+        {
+            let my_match_team = player_tuple.borrow_player().match_team;
+
+            let mut teammate_ids: Vec<PlayerId> = Vec::new();
+            if let Some(my_team) = my_match_team {
+                for p in server.player.iter_borrow() {
+                    // Don't include self in the teammate set — the
+                    // inner update has its own self-skip logic and we
+                    // want to keep the set small.
+                    if p.player_id != player_id && p.match_team == Some(my_team) {
+                        teammate_ids.push(p.player_id);
+                    }
+                }
+            }
+
+            // Pick a movement target. If our base is being captured
+            // (>5s of enemy capture progress), defend; otherwise push
+            // the enemy base.
+            let movement_target: Option<Vec2> =
+                my_match_team.and_then(|team| {
+                    use crate::match_state::ArenaLayout;
+                    let m = &server.match_state;
+                    let (own_base, enemy_base, defense_progress_ms) = match team {
+                        crate::match_state::Team::Blue => (
+                            ArenaLayout::DEFAULT.blue_base,
+                            ArenaLayout::DEFAULT.red_base,
+                            m.blue_base_capture.as_millis(),
+                        ),
+                        crate::match_state::Team::Red => (
+                            ArenaLayout::DEFAULT.red_base,
+                            ArenaLayout::DEFAULT.blue_base,
+                            m.red_base_capture.as_millis(),
+                        ),
+                    };
+                    let target = if defense_progress_ms > 5_000 {
+                        own_base
+                    } else {
+                        enemy_base
+                    };
+                    Some(target)
+                });
+
+            let bot_state = player.inner.bot_mut().unwrap();
+            bot_state.cta_teammate_ids = teammate_ids;
+            bot_state.cta_movement_target = movement_target;
+        }
+
         let update = server.world.get_player_complete(player_tuple);
         let action = player
             .inner
