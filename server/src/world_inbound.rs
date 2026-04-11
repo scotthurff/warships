@@ -277,15 +277,18 @@ impl CommandTrait for Spawn {
         // Tight per-slot wander. Each slot already has a distinct
         // starting position ~130 units from the base center, so the
         // retry loop only needs a little room to shift around for
-        // collision avoidance. Formula: ship_radius * 4 + 50, floored
-        // at 150. For Fletcher (radius ~30) that's 170. For Essex
-        // (radius ~132) that's 578. Both keep spawns visibly at the
-        // base while giving can_spawn's threshold check enough slack
-        // to find a clear spot.
+        // collision avoidance — but procedural terrain can drop an
+        // island on top of a slot, and the retry loop needs a real
+        // search area to find water. Floor bumped 150 → 400 so even
+        // Fletcher-sized ships get a usable search ring. Essex still
+        // uses its ship_radius * 4 + 50 formula (~578). 400 is still
+        // visibly "at the base" (inside the 250-radius base circle
+        // plus a margin) while avoiding the infinite respawn hang
+        // when terrain blocks the pentagon slot.
         let max_distance_override = if cta_team.is_some() {
             let ship_radius = self.entity_type.data().radius;
             let cap = ship_radius * 4.0 + 50.0;
-            Some(cap.max(150.0))
+            Some(cap.max(400.0))
         } else {
             None
         };

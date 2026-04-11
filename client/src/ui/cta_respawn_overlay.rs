@@ -9,7 +9,7 @@
 use crate::ui::UiEvent;
 use crate::Mk48Game;
 use common::entity::EntityType;
-use gloo_timers::callback::Timeout;
+use gloo_timers::callback::Interval;
 use kodiak_client::use_ui_event_callback;
 use yew::prelude::*;
 
@@ -26,18 +26,23 @@ pub fn cta_respawn_overlay(props: &CtaRespawnOverlayProps) -> Html {
     let ui_event_callback = use_ui_event_callback::<Mk48Game>();
     let ship = props.ship;
 
-    // Fire the respawn once per mount via use_effect_with so we don't
-    // schedule a second Timeout on every re-render.
+    // Schedule a recurring Interval that fires UiEvent::Respawn every
+    // 1500ms while the overlay is mounted. A one-shot Timeout was the
+    // previous implementation, but if the first Spawn command failed
+    // server-side (terrain blocks the slot, another ship in the way,
+    // etc) the player got stuck on the respawn screen forever with no
+    // retry. The interval keeps hammering until the spawn succeeds,
+    // at which point the status transitions Respawning → Playing, the
+    // overlay unmounts, and Interval's Drop cancels it automatically.
     use_effect_with(ship, move |_| {
         let cb = ui_event_callback.clone();
-        let timeout = ship.map(move |entity_type| {
-            Timeout::new(1500, move || {
+        let interval = ship.map(move |entity_type| {
+            Interval::new(1500, move || {
                 cb.emit(UiEvent::Respawn(entity_type));
             })
         });
-        // Dropping the Timeout on unmount cancels it — important so we
-        // don't double-fire if the overlay is torn down early.
-        move || drop(timeout)
+        // Dropping the Interval on unmount cancels it.
+        move || drop(interval)
     });
 
     html! {
