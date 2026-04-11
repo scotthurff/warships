@@ -16,7 +16,14 @@ extern crate test;
 pub const MK48_CONSTANTS: &'static GameConstants = &GameConstants {
     game_id: "Warships",
     name: "WARSHIPS",
-    domain: "localhost",
+    // Kodiak's check_origin (router.rs) only allows WebSocket upgrades
+    // from origins ending in this domain, "softbear.com", or
+    // localhost/127.0.0.1 / port 8443. When deployed behind Fly.io
+    // the browser sends Origin: https://warships.fly.dev and was
+    // rejected with 401 "invalid origin", breaking every client
+    // WebSocket. Pointing this at the live host unblocks prod; local
+    // dev still works via the separate localhost allow-branch.
+    domain: "warships.fly.dev",
     geodns_enabled: false,
     trademark: "WARSHIPS",
     server_names: &[
