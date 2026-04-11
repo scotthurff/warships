@@ -30,13 +30,15 @@ impl Default for Mk48Settings {
     fn default() -> Self {
         Self {
             antialias: !is_mobile(),
-            // Animations + dynamic waves on by default so the ocean
-            // looks alive. Previously both were false, which made the
-            // water look like a static sheet of paint. Users who care
-            // about performance can still disable them in settings.
-            animations: true,
+            // REVERTED: animations + dynamic_waves defaulted to true
+            // in commit 34ddbf0 but it made the client stick on
+            // "loading taking longer than expected". Something in the
+            // animated water shader path is breaking init. Put both
+            // back to false to unblock playtesting; investigate the
+            // renderer separately.
+            animations: false,
             circle_hud: false,
-            dynamic_waves: true,
+            dynamic_waves: false,
             fps_shown: false,
             team_dialog_shown: true,
             shadows: Default::default(),
