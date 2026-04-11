@@ -1,0 +1,20 @@
+# This .dockerignore applies to the staged deploy context created by
+# deploy.sh, which rsyncs warships/ and warships-kodiak/ into a temp
+# directory. The deploy script excludes target/, .git/, node_modules/
+# at the rsync layer, but include this file too as belt-and-braces so
+# `fly deploy` never accidentally uploads compiled artifacts.
+
+**/target/
+**/.git/
+**/node_modules/
+**/.DS_Store
+**/*.rlib
+
+# Don't ship the fly config or deploy script into the image itself.
+fly.toml
+deploy.sh
+
+# Don't ship plan docs into the image.
+plans/
+
+# Keep the Dockerfile, Makefiles, source, and everything else.

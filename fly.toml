@@ -1,0 +1,40 @@
+# Fly.io configuration for Warships.
+#
+# Deploy via `./deploy.sh` in this directory — it stages warships/ and
+# warships-kodiak/ into a temp build context, then runs `fly deploy`.
+#
+# The app name is a placeholder — run `fly launch --no-deploy` once to
+# claim a real name, then edit this file if needed.
+
+app = "warships"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Keep the machine ALWAYS running. A game server has a physics tick
+  # loop and live match state; auto-stopping mid-match would drop all
+  # players. If idle cost is a concern later, bump memory down or
+  # switch to scale-to-zero with a warm-up sequence.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  # shared-cpu-1x / 512MB is plenty for 10 actors at 10Hz + the bot AI.
+  # Bump to 1024MB if you see OOM kills in `fly logs`.
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

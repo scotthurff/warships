@@ -5,8 +5,9 @@
 WARSHIPS is a fork of [mk48.io](https://github.com/SoftbearStudios/mk48) adapted into a kid-friendly single-player naval combat game for iPad and desktop browser.
 
 **Tech:** Rust server + Rust/WASM client (Yew framework for UI, WebGL for rendering, kodiak game engine)
-**License:** AGPL-3.0 (inherited from mk48). Personal/family use is fine. Open-source fork if distributing.
-**Repo:** github.com/scotthurff/warships (private)
+**License:** AGPL-3.0 (inherited from mk48). Source must be available to players of any hosted deployment.
+**Repo:** github.com/scotthurff/warships
+**Engine dep:** github.com/scotthurff/warships-kodiak (fork of softbearstudios/kodiak, vendored as sibling directory)
 
 ## Build & Run
 
