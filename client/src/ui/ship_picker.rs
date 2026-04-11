@@ -44,20 +44,20 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
         .collect();
     ships.sort_by_key(|e| e.data().label);
 
+    // Level nav wraps around: going back from level 1 lands on max,
+    // and forward from max lands on 1. No one-way doors.
     let on_prev = {
         let level = level.clone();
         Callback::from(move |_: MouseEvent| {
-            if *level > 1 {
-                level.set(*level - 1);
-            }
+            let new = if *level > 1 { *level - 1 } else { max_level };
+            level.set(new);
         })
     };
     let on_next = {
         let level = level.clone();
         Callback::from(move |_: MouseEvent| {
-            if *level < max_level {
-                level.set(*level + 1);
-            }
+            let new = if *level < max_level { *level + 1 } else { 1 };
+            level.set(new);
         })
     };
 
@@ -86,14 +86,11 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
                 <div style="min-width: 120px;"></div> // spacer to balance the Back button
             </div>
 
-            // Level nav: < Level N >
+            // Level nav: < Level N >   (wraps around at both ends)
             <div style="display: flex; align-items: center; justify-content: center; gap: 20px; padding: 10px 0; border-top: 1px solid rgba(148,163,184,0.15); border-bottom: 1px solid rgba(148,163,184,0.15);">
                 <button
-                    style={format!("width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: {};",
-                        if *level == 1 { "#475569" } else { "#4ADE80" },
-                        if *level == 1 { "not-allowed" } else { "pointer" })}
+                    style="width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: pointer;"
                     onclick={on_prev}
-                    disabled={*level == 1}
                 >
                     {"<"}
                 </button>
@@ -101,11 +98,8 @@ pub fn ship_picker(props: &ShipPickerProps) -> Html {
                     {format!("Level {} / {}", *level, max_level)}
                 </div>
                 <button
-                    style={format!("width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: {}; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: {};",
-                        if *level == max_level { "#475569" } else { "#4ADE80" },
-                        if *level == max_level { "not-allowed" } else { "pointer" })}
+                    style="width: 48px; height: 48px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(148,163,184,0.3); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 22px; font-weight: 700; cursor: pointer;"
                     onclick={on_next}
-                    disabled={*level == max_level}
                 >
                     {">"}
                 </button>
