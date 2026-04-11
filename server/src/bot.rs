@@ -16,7 +16,8 @@ use kodiak_server::rand::rngs::ThreadRng;
 use kodiak_server::rand::seq::IteratorRandom;
 use kodiak_server::rand::{thread_rng, Rng};
 use kodiak_server::{
-    gen_radius, random_bot_name, ArenaService, ArenaSettingsDto, BotAction, Player, PlayerId,
+    gen_radius, random_bot_name, ArenaService, ArenaSettingsDto, BotAction, BotOptions, Player,
+    PlayerId,
 };
 
 /// Bot implements a ship-controlling AI that is, in many ways, equivalent to a player.
@@ -374,6 +375,18 @@ impl Bot {
 }
 
 impl kodiak_server::Bot<Server> for Bot {
+    // Hard-cap the bot population to exactly 9. With the 1 human player
+    // that's 10 total actors — the 5v5 Capture the Area ceiling. For
+    // Free Roam 9 bots is enough to feel populated on a kid-friendly
+    // map without overwhelming the arena. mk48's default (min 30, max
+    // 128) was flooding CTA with 20+ bots per team, way beyond the 5/5
+    // assign_match_teams cap.
+    const AUTO: BotOptions = BotOptions {
+        min_bots: 9,
+        max_bots: 9,
+        bot_percent: 0,
+    };
+
     fn update(
         server: &Server,
         player_id: PlayerId,
@@ -388,13 +401,30 @@ impl kodiak_server::Bot<Server> for Bot {
             .unwrap()
             .update(update, player_id, settings);
 
+        // Check the match state so we can behave correctly in CTA:
+        //  - if the match is running but this bot has no team, quit
+        //    (the assign_late_joiners caps are full — we shouldn't
+        //    linger as a ghost entity in the arena).
+        //  - if the bot has a team, its spawn uses the fleet loadout.
+        let match_running = matches!(
+            server.match_state.phase,
+            common::protocol::MatchPhase::Countdown
+                | common::protocol::MatchPhase::Playing
+        );
+
         // Post-process: in Capture the Area, the player's match_team is
-        // set and selected_loadout holds the fleet-composition ship this
-        // bot should use. Override the bot's randomly-picked spawn ship
-        // with the composition slot so team loadouts stay balanced.
+        // set and selected_loadout holds the fleet ship this bot should
+        // use. Override the bot's randomly-picked spawn ship with the
+        // team loadout so both sides stay balanced.
         match action {
             BotAction::Some(Command::Spawn(mut spawn)) => {
                 let p = player_tuple.borrow_player();
+                if match_running && p.match_team.is_none() {
+                    // Can't spawn in a running CTA match without a team —
+                    // the team caps are full. Quit so the engine removes
+                    // us and (hopefully) stops cycling.
+                    return BotAction::Quit;
+                }
                 if p.match_team.is_some() {
                     if let Some(ship) = p.selected_loadout {
                         spawn.entity_type = ship;

@@ -258,16 +258,29 @@ impl Server {
         }
     }
 
+    /// Hard CTA team caps. 5 per side, 10 total including the human.
+    const BLUE_MAX: u32 = 5;
+    const RED_MAX: u32 = 5;
+
     /// Assign Blue/Red teams to every player at match start.
     ///
     /// Humans (in CTA mode) always go Blue. Bots fill the remaining
-    /// Blue slots up to 4, then the Red slots up to 5. Extra bots beyond
-    /// 10 total get slotted onto whichever team is lighter.
+    /// Blue slots up to 5, then the Red slots up to 5. Bots beyond the
+    /// cap do NOT get a team — they'll quit on their next Bot::update
+    /// (see bot.rs post-processing).
     ///
     /// Each bot also gets a `selected_loadout` set based on the current
     /// `match_state.ai_fleet` and their slot within their team, so the
     /// bot trait update can override the bot's Spawn command
     /// entity_type with the fleet-appropriate ship.
+    ///
+    /// Also despawns every alive boat owned by a team-assigned player so
+    /// that pre-match free-roam boats (which mk48 scatters across the
+    /// arena) are cleared out and their owners respawn cleanly through
+    /// the CTA spawn override on the next tick. Without this, Red bots
+    /// that happened to be near the Blue base when the match started
+    /// would simply keep their existing positions — the "red bots near
+    /// my base at time zero" bug.
     fn assign_match_teams(&mut self) {
         // Humans first — they're always Blue, regardless of join order.
         for mut player in self.player.iter_borrow_mut() {
@@ -277,8 +290,6 @@ impl Server {
         }
 
         let (mut blue, mut red) = self.count_teams();
-        const BLUE_MAX: u32 = 5;
-        const RED_MAX: u32 = 5;
         let fleet = self.match_state.ai_fleet.clone();
 
         for mut player in self.player.iter_borrow_mut() {
@@ -288,48 +299,102 @@ impl Server {
             if player.match_team.is_some() {
                 continue;
             }
-            let (team, slot) = if blue < BLUE_MAX && blue <= red {
+            // Honor the hard cap. Extras don't get a team and will quit
+            // on their next update rather than ghosting around the arena.
+            let (team, slot) = if blue < Self::BLUE_MAX && blue <= red {
                 let slot = blue;
                 blue += 1;
                 (Team::Blue, slot)
-            } else if red < RED_MAX {
+            } else if red < Self::RED_MAX {
                 let slot = red;
                 red += 1;
                 (Team::Red, slot)
             } else {
-                // Both sides full — slot onto whichever is smaller.
-                if blue <= red {
-                    let slot = blue;
-                    blue += 1;
-                    (Team::Blue, slot)
-                } else {
-                    let slot = red;
-                    red += 1;
-                    (Team::Red, slot)
-                }
+                // Both caps full — leave match_team = None so
+                // Bot::update returns BotAction::Quit on this tick.
+                continue;
             };
             player.match_team = Some(team);
-            // Clamp slot to composition range (max 5 slots) so extra bots
-            // cycle through the available ships rather than panicking.
             let slot_u8 = slot.min(4) as u8;
             player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
         }
+
+        // Clear pre-match boats for every team-assigned player. They'll
+        // respawn via the CTA spawn override on the next tick at their
+        // team base.
+        self.despawn_cta_participants_boats();
     }
 
-    /// Assign any bots that joined after `assign_match_teams` was called
-    /// to whichever side is currently lighter (Red on tie).
+    /// Assign late-joining bots to a team up to the cap, and set their
+    /// fleet loadout. Bots that can't be assigned (both caps full) stay
+    /// team-less and will quit on their next update via the check in
+    /// bot.rs.
     fn assign_late_joiners(&mut self) {
         let (mut blue, mut red) = self.count_teams();
+        let fleet = self.match_state.ai_fleet.clone();
         for mut player in self.player.iter_borrow_mut() {
             if !player.is_bot() || player.match_team.is_some() {
                 continue;
             }
-            if blue < red {
-                player.match_team = Some(Team::Blue);
+            let team = if blue < Self::BLUE_MAX && blue <= red {
                 blue += 1;
-            } else {
-                player.match_team = Some(Team::Red);
+                Team::Blue
+            } else if red < Self::RED_MAX {
                 red += 1;
+                Team::Red
+            } else {
+                // Caps full — don't assign, bot will quit.
+                continue;
+            };
+            player.match_team = Some(team);
+            // Use the current team size minus one as the fleet slot
+            // (0..4), clamped to the fleet length.
+            let slot = (match team {
+                Team::Blue => blue,
+                Team::Red => red,
+            })
+            .saturating_sub(1);
+            player.selected_loadout = Some(fleet.ship_for_slot(slot.min(4) as u8));
+        }
+    }
+
+    /// Remove every alive boat owned by a team-assigned player and put
+    /// them back in Spawning status. Used by `assign_match_teams` to
+    /// clear pre-match free-roam clutter. The player's next Spawn
+    /// command (from Bot::update for bots, or the next human spawn
+    /// request) routes through the CTA base override.
+    fn despawn_cta_participants_boats(&mut self) {
+        let to_remove: Vec<EntityIndex> = self
+            .player
+            .iter_borrow()
+            .filter_map(|p| {
+                if p.match_team.is_some() {
+                    if let Status::Alive { entity_index, .. } = p.status {
+                        return Some(entity_index);
+                    }
+                }
+                None
+            })
+            .collect();
+        for idx in to_remove {
+            self.world.remove(
+                idx,
+                common::death_reason::DeathReason::Debug(
+                    "cta match start: clearing pre-match boats".to_string(),
+                ),
+            );
+        }
+        // world.remove may leave status as Dead; force Spawning so the
+        // bot AI emits a fresh Spawn on its next update.
+        for mut p in self.player.iter_borrow_mut() {
+            if p.match_team.is_some() {
+                match p.status {
+                    Status::Alive { .. } | Status::Dead { .. } => {
+                        p.status = Status::Spawning;
+                        p.flags.left_game = false;
+                    }
+                    Status::Spawning => {}
+                }
             }
         }
     }
