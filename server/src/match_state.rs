@@ -41,7 +41,10 @@ impl ArenaLayout {
         blue_base: Vec2::new(0.0, 500.0),
         red_base: Vec2::new(0.0, -500.0),
         base_radius: 250.0,
-        arena_radius: 1200.0,
+        // Bumped from 1200 → 1500 (25% more arena per user request).
+        // Bases stay at ±500 so capture-push distance is unchanged;
+        // the extra space lives on the flanks and beyond the bases.
+        arena_radius: 1500.0,
     };
 }
 

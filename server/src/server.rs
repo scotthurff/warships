@@ -282,10 +282,12 @@ impl Server {
     /// would simply keep their existing positions — the "red bots near
     /// my base at time zero" bug.
     fn assign_match_teams(&mut self) {
-        // Humans first — they're always Blue, regardless of join order.
+        // Humans first — they're always Blue slot 0 regardless of
+        // join order.
         for mut player in self.player.iter_borrow_mut() {
             if !player.is_bot() && player.game_mode == GameMode::CaptureTheArea {
                 player.match_team = Some(Team::Blue);
+                player.match_slot = 0;
             }
         }
 
@@ -316,6 +318,7 @@ impl Server {
             };
             player.match_team = Some(team);
             let slot_u8 = slot.min(4) as u8;
+            player.match_slot = slot_u8;
             player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
         }
 
@@ -336,25 +339,22 @@ impl Server {
             if !player.is_bot() || player.match_team.is_some() {
                 continue;
             }
-            let team = if blue < Self::BLUE_MAX && blue <= red {
+            let (team, slot) = if blue < Self::BLUE_MAX && blue <= red {
+                let s = blue;
                 blue += 1;
-                Team::Blue
+                (Team::Blue, s)
             } else if red < Self::RED_MAX {
+                let s = red;
                 red += 1;
-                Team::Red
+                (Team::Red, s)
             } else {
                 // Caps full — don't assign, bot will quit.
                 continue;
             };
             player.match_team = Some(team);
-            // Use the current team size minus one as the fleet slot
-            // (0..4), clamped to the fleet length.
-            let slot = (match team {
-                Team::Blue => blue,
-                Team::Red => red,
-            })
-            .saturating_sub(1);
-            player.selected_loadout = Some(fleet.ship_for_slot(slot.min(4) as u8));
+            let slot_u8 = slot.min(4) as u8;
+            player.match_slot = slot_u8;
+            player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
         }
     }
 

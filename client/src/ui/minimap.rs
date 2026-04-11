@@ -32,7 +32,7 @@ pub struct MinimapProps {
 /// Minimap panel size in pixels (square).
 const MINIMAP_PX: f32 = 200.0;
 /// Arena radius in world units. Mirrors `server::match_state::ArenaLayout::DEFAULT.arena_radius`.
-const ARENA_RADIUS: f32 = 1200.0;
+const ARENA_RADIUS: f32 = 1500.0;
 /// Base radius in world units.
 const BASE_RADIUS: f32 = 250.0;
 

@@ -130,21 +130,42 @@ impl CommandTrait for Spawn {
          */
 
         // Capture the Area override: if the player has a match_team
-        // assignment (humans AND bots), force-spawn at their team base.
-        // This bypasses mk48's level-based vertical bias and any death
-        // exclusion zone — in CTA you always respawn at your own base.
-        // We key on match_team (not game_mode) so that bots — whose
-        // game_mode stays FreeRoam by default — still get routed to
-        // their assigned base at CTA match start.
+        // assignment (humans AND bots), force-spawn at a slot-specific
+        // position around their team base. This bypasses mk48's
+        // level-based vertical bias and any death exclusion zone — in
+        // CTA you always respawn at your own base. We key on
+        // match_team (not game_mode) so bots (whose game_mode stays
+        // FreeRoam by default) still get routed correctly.
+        //
+        // Each team has 5 slots. Slots are arranged on a pentagon
+        // inscribed in a circle of radius SLOT_RING_RADIUS around the
+        // base center. This gives every teammate a distinct starting
+        // point so they don't all cluster at (0, ±500) and fight
+        // can_spawn's threshold-clearance check. The human player is
+        // always slot 0 on Blue — a fixed north-most point at the
+        // Blue base.
+        const SLOT_RING_RADIUS: f32 = 130.0;
         let cta_team = player.match_team;
-        let cta_team_spawn: Option<Vec2> = cta_team.map(|team| match team {
-            crate::match_state::Team::Blue => ArenaLayout::DEFAULT.blue_base,
-            crate::match_state::Team::Red => ArenaLayout::DEFAULT.red_base,
+        let cta_team_spawn: Option<Vec2> = cta_team.map(|team| {
+            let base = match team {
+                crate::match_state::Team::Blue => ArenaLayout::DEFAULT.blue_base,
+                crate::match_state::Team::Red => ArenaLayout::DEFAULT.red_base,
+            };
+            let slot = player.match_slot as f32;
+            // Pentagon: 5 positions at 72° spacing, starting at the
+            // top (toward the enemy base for more aggressive feel).
+            let angle = std::f32::consts::FRAC_PI_2
+                + slot * (std::f32::consts::TAU / 5.0);
+            let offset = Vec2::new(angle.cos(), angle.sin()) * SLOT_RING_RADIUS;
+            base + offset
         });
 
-        if let Some(base_pos) = cta_team_spawn {
-            spawn_position = base_pos;
-            spawn_radius = ArenaLayout::DEFAULT.base_radius * 0.8;
+        if let Some(slot_pos) = cta_team_spawn {
+            spawn_position = slot_pos;
+            // Tight spawn_radius — since each slot has a distinct
+            // starting position, the retry loop only needs to wiggle
+            // a little to avoid direct collisions.
+            spawn_radius = 30.0;
         }
 
         let exclusion_zone = if cta_team_spawn.is_some() {
@@ -253,18 +274,18 @@ impl CommandTrait for Spawn {
         boat.transform.position = spawn_position;
         boat.transform.direction = desired_direction;
         boat.guidance.direction_target = desired_direction;
-        // In CTA, cap the retry wander radius based on the ship's
-        // own size. A small destroyer fits in a tight 350-unit ring,
-        // but a carrier (Essex is 265m long → radius ~132m) needs
-        // way more clearance — can_spawn enforces a threshold that
-        // scales with ship radius, and the retry loop exhausts all
-        // attempts trying to squeeze a carrier into a destroyer-sized
-        // ring. Formula: base_radius + ship_radius * 3, floored at
-        // 350 so small ships still spawn tightly at the base.
+        // Tight per-slot wander. Each slot already has a distinct
+        // starting position ~130 units from the base center, so the
+        // retry loop only needs a little room to shift around for
+        // collision avoidance. Formula: ship_radius * 4 + 50, floored
+        // at 150. For Fletcher (radius ~30) that's 170. For Essex
+        // (radius ~132) that's 578. Both keep spawns visibly at the
+        // base while giving can_spawn's threshold check enough slack
+        // to find a clear spot.
         let max_distance_override = if cta_team.is_some() {
             let ship_radius = self.entity_type.data().radius;
-            let cap = ArenaLayout::DEFAULT.base_radius + ship_radius * 3.0;
-            Some(cap.max(350.0))
+            let cap = ship_radius * 4.0 + 50.0;
+            Some(cap.max(150.0))
         } else {
             None
         };

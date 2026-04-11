@@ -127,6 +127,11 @@ pub struct TempPlayer {
     pub game_mode: GameMode,
     /// Team assignment for Capture the Area mode (Blue, Red, or None in Free Roam).
     pub match_team: Option<Team>,
+    /// Slot 0..4 within the player's team. Used to compute a distinct
+    /// spawn position around the team base so 5 teammates don't all
+    /// cluster at the same point (which makes can_spawn's threshold
+    /// clearance reject positions and the retry loop explodes outward).
+    pub match_slot: u8,
     /// Ship the player selected for this match (set on spawn).
     pub selected_loadout: Option<EntityType>,
     /// Stats for the current match, reset on Play Again.
@@ -158,6 +163,7 @@ impl TempPlayer {
             team: Default::default(),
             game_mode: GameMode::default(),
             match_team: None,
+            match_slot: 0,
             selected_loadout: None,
             match_stats: PlayerMatchStats::default(),
             spawn_time: None,
