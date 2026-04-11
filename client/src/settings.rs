@@ -30,9 +30,13 @@ impl Default for Mk48Settings {
     fn default() -> Self {
         Self {
             antialias: !is_mobile(),
-            animations: false,
+            // Animations + dynamic waves on by default so the ocean
+            // looks alive. Previously both were false, which made the
+            // water look like a static sheet of paint. Users who care
+            // about performance can still disable them in settings.
+            animations: true,
             circle_hud: false,
-            dynamic_waves: false,
+            dynamic_waves: true,
             fps_shown: false,
             team_dialog_shown: true,
             shadows: Default::default(),

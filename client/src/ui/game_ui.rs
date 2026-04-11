@@ -559,7 +559,15 @@ pub struct UiStatusRespawning {
 }
 
 impl Mk48Game {
-    pub(crate) fn update_ui_props(&self, context: &mut ClientContext<Self>, status: UiStatus) {
+    pub(crate) fn update_ui_props(&mut self, context: &mut ClientContext<Self>, status: UiStatus) {
+        // Latch touch detection — once we've seen a touch, stay in
+        // touch mode for the session. iPad Safari fires synthesized
+        // mouse events after touches that would otherwise toggle
+        // context.mouse.touch_screen back to false and make the
+        // TouchControls overlay flicker off.
+        if context.mouse.touch_screen {
+            self.touch_ever_seen = true;
+        }
         let in_game = !matches!(status, UiStatus::Spawning);
 
         // Build the minimap snapshot from match_update.players, NOT from
@@ -594,7 +602,7 @@ impl Mk48Game {
             members: context.state.game.members.clone(),
             joiners: context.state.game.joiners.clone(),
             joins: context.state.game.joins.clone(),
-            touch_screen: context.mouse.touch_screen,
+            touch_screen: self.touch_ever_seen || context.mouse.touch_screen,
             match_update: context.state.game.match_update.clone(),
             last_spawn_entity: self.last_spawn_entity,
             minimap_entries,

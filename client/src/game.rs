@@ -85,6 +85,13 @@ pub struct Mk48Game {
     /// respawn them at their team base in Capture the Area mode without
     /// re-prompting a ship picker. `None` before the first spawn.
     pub last_spawn_entity: Option<EntityType>,
+    /// Latches to true the first time we see `context.mouse.touch_screen`.
+    /// The engine toggles touch_screen on every pointer event, so on
+    /// iPad Safari a touch is often followed by a synthesized mouse
+    /// event that flips the raw value back to false, making the touch
+    /// controls overlay flicker off. Once we've seen any touch, we
+    /// keep the controls visible for the rest of the session.
+    pub touch_ever_seen: bool,
 }
 
 type FullLayer = ShadowLayer<Mk48Layer>;
@@ -217,6 +224,7 @@ impl GameClient for Mk48Game {
             fps_counter: FpsMonitor::new(1.0),
             ui_state: UiState::default(),
             last_spawn_entity: None,
+            touch_ever_seen: false,
         })
     }
 
