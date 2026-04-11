@@ -112,7 +112,22 @@ impl World {
         let visual_range_inv = camera.visual.powi(-2);
         let radar_range_inv = camera.radar.powi(-2);
         let sonar_range_inv = camera.sonar.powi(-2);
-        let max_range = camera.visual.max(camera.radar.max(camera.sonar));
+        // Remember the player's CTA team (Copy'd) so the closure below
+        // can decide whether "friendly" means "always visible".
+        let player_match_team = player.match_team;
+        // In Capture the Area the player should always see their
+        // teammates on the main map, regardless of visual range. Bump
+        // max_range to cover the full 1500-radius arena (max diagonal
+        // ≈ 3000 units between two ships at opposite edges) so the
+        // iter_radius below includes every boat in the arena. Free
+        // Roam keeps the sensor-based range so distant enemies aren't
+        // free-revealed.
+        let base_max_range = camera.visual.max(camera.radar.max(camera.sonar));
+        let max_range = if player_match_team.is_some() {
+            base_max_range.max(3500.0)
+        } else {
+            base_max_range
+        };
         let close_proximity_squared = player_entity.map_or(0.0, |e| {
             (e.entity_type.data().radius + Entity::CLOSE_PROXIMITY).powi(2)
         });
@@ -138,7 +153,14 @@ impl World {
                 let same_player =
                     entity.player.is_some() && tuple == &**entity.player.as_ref().unwrap();
                 let friendly = entity.is_friendly_to_player(Some(tuple));
-                let known = same_player || (friendly && distance_squared < 800f32.powi(2));
+                // CTA teammates are always "known" (always visible on
+                // the main map, regardless of range). Free Roam keeps
+                // the 800-unit proximity gate for team-member boats
+                // so the mk48 team system behaves as before.
+                let known = same_player
+                    || (friendly
+                        && (player_match_team.is_some()
+                            || distance_squared < 800f32.powi(2)));
 
                 // Variables related to detecting the contact.
                 let mut visible = false;

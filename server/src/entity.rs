@@ -568,12 +568,26 @@ impl Entity {
         }
 
         let player = player.borrow_player();
+        let other_player = other_player.borrow_player();
+
+        // Capture the Area teammates are friendly. This is checked
+        // before mk48's TeamId path because CTA players typically have
+        // no TeamId (mk48's team system is unused in single-player
+        // modes). Making same-match_team friendly here gets us three
+        // things for free: (1) spawn clearance — can_spawn collapses
+        // its safe_distance multiplier to 1.0 for allies so pentagon
+        // slots fit without the threshold blow-up; (2) friendly fire
+        // is off between teammates; (3) collision damage between
+        // allies is reduced.
+        if let (Some(a), Some(b)) = (player.match_team, other_player.match_team) {
+            if a == b {
+                return true;
+            }
+        }
 
         if player.team_id().is_none() {
             return false;
         }
-
-        let other_player = other_player.borrow_player();
 
         player.team_id() == other_player.team_id()
     }
