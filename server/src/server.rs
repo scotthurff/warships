@@ -336,7 +336,15 @@ impl Server {
         let (mut blue, mut red) = self.count_teams();
         let fleet = self.match_state.ai_fleet.clone();
         for mut player in self.player.iter_borrow_mut() {
-            if !player.is_bot() || player.match_team.is_some() {
+            // Skip players already on a team. Previously this also
+            // skipped humans (!player.is_bot()), which meant a human
+            // joining an in-progress match never got a team — their
+            // spawn silently failed the score-gated can_spawn_as
+            // check because match_team stayed None. Now we assign
+            // any unassigned player, human or bot, to the next open
+            // slot. Humans always go Blue when possible (slot 0 if
+            // available).
+            if player.match_team.is_some() {
                 continue;
             }
             let (team, slot) = if blue < Self::BLUE_MAX && blue <= red {
@@ -354,7 +362,12 @@ impl Server {
             player.match_team = Some(team);
             let slot_u8 = slot.min(4) as u8;
             player.match_slot = slot_u8;
-            player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
+            // Only override the loadout for bots. Humans already have
+            // a selected_loadout from the ship picker (set in
+            // Spawn::apply after this function returns).
+            if player.is_bot() {
+                player.selected_loadout = Some(fleet.ship_for_slot(slot_u8));
+            }
         }
     }
 
