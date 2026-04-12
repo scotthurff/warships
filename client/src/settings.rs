@@ -30,15 +30,15 @@ impl Default for Mk48Settings {
     fn default() -> Self {
         Self {
             antialias: !is_mobile(),
-            // REVERTED: animations + dynamic_waves defaulted to true
-            // in commit 34ddbf0 but it made the client stick on
-            // "loading taking longer than expected". Something in the
-            // animated water shader path is breaking init. Put both
-            // back to false to unblock playtesting; investigate the
-            // renderer separately.
-            animations: false,
+            // Re-enabled: the earlier "loading taking longer than
+            // expected" revert was a false alarm — the wave shader
+            // (#define WAVES 6 in background.frag) takes >5s to
+            // compile on cold iPad WebGL contexts, which tripped the
+            // HTML splash warning at the 5s mark. The game loads fine
+            // if you wait. The splash timer is cosmetic, not a hang.
+            animations: true,
             circle_hud: false,
-            dynamic_waves: false,
+            dynamic_waves: true,
             fps_shown: false,
             team_dialog_shown: true,
             shadows: Default::default(),
