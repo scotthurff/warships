@@ -534,10 +534,7 @@ impl ArenaService for Server {
                     caller_is_cta || match_running
                 };
                 if should_run_cta {
-                    if matches!(
-                        self.match_state.phase,
-                        MatchPhase::Waiting | MatchPhase::Ended { .. }
-                    ) {
+                    if matches!(self.match_state.phase, MatchPhase::Waiting) {
                         self.match_state.start_match();
                         self.assign_match_teams();
                         self.clear_statics();
@@ -788,10 +785,12 @@ impl ArenaService for Server {
 
             // First CTA player arrived? Kick the match off and assign
             // teams to every player (human = Blue, bots split 4B/5R).
-            if matches!(
-                self.match_state.phase,
-                MatchPhase::Waiting | MatchPhase::Ended { .. }
-            ) {
+            // Only auto-start from Waiting — NOT from Ended. If the
+            // match just finished, we stay in Ended so the client can
+            // show the full-screen results interstitial. The match
+            // resets to Waiting when the human clicks "Play Again"
+            // (handle_play_again → match_state.reset).
+            if matches!(self.match_state.phase, MatchPhase::Waiting) {
                 self.match_state.start_match();
                 self.assign_match_teams();
                 // One-time sweep: remove any static entities (crates,
