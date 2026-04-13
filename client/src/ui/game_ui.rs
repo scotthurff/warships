@@ -73,6 +73,30 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // ship picker.
     let title_step = use_state(|| TitleStep::ModeSelect);
 
+    // Reset the three title-screen cells whenever the match_id bumps or
+    // match_update disappears. Two triggers land here:
+    //   - Play Again on the server bumps match_id (still Some, new id).
+    //     The user stays in-game so this reset is invisible.
+    //   - Quit to Title on the server calls match_state.reset_to_waiting
+    //     which bumps match_id AND drops match_update to None for the
+    //     quitter. The user returns to the mode picker with no pre-
+    //     selected ship.
+    // Without this, title state persists across sessions and users land
+    // on the ship picker with a stale selection — or worse, the stuck
+    // state described in plans/fix-cta-match-reset-stuck-state.md.
+    {
+        let selected_mode = selected_mode.clone();
+        let selected_ship = selected_ship.clone();
+        let title_step = title_step.clone();
+        let session_key = props.match_update.as_ref().map(|m| m.match_id);
+        use_effect_with(session_key, move |_| {
+            selected_mode.set(GameMode::FreeRoam);
+            selected_ship.set(None);
+            title_step.set(TitleStep::ModeSelect);
+            || ()
+        });
+    }
+
     let on_play = {
         let mode = *selected_mode;
         let selected_ship = selected_ship.clone();

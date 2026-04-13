@@ -112,25 +112,68 @@ impl Server {
 
     /// Handle the "Quit to Title" button from the CTA results screen.
     ///
-    /// Flips the player's game_mode back to FreeRoam, clears their
-    /// match_team, and puts them in Spawning. If this was the last
-    /// CTA participant, the tick loop will naturally stop ticking
-    /// match_state on the next pass.
+    /// Full match teardown. The previous version only mutated the quitting
+    /// human's fields, leaving `match_state` stuck at `Ended`, bots still
+    /// team-assigned with boats in the arena, and the next CTA entry
+    /// soft-locked behind a `MatchEndOverlay` that never unmounted. See
+    /// `plans/fix-cta-match-reset-stuck-state.md`.
     fn handle_quit_to_title(&mut self, player_id: PlayerId) {
-        if let Some(mut player) = self.player.borrow_player_mut(player_id) {
-            info!("player {:?} quit to title", player.player_id);
-            player.game_mode = GameMode::FreeRoam;
-            player.match_team = None;
-            player.selected_loadout = None;
-            player.match_stats = PlayerMatchStats::default();
-            // If they still have a boat, mark it for cleanup so mk48's
-            // world.update sweeps it away next tick.
-            if let Status::Alive { .. } = player.status {
-                player.flags.left_game = true;
-            }
-            player.status = Status::Spawning;
-            player.flags.left_game = false;
+        info!(
+            "match {} quit-to-title (player {:?}) — tearing down",
+            self.match_state.match_id, player_id
+        );
+
+        // 1. Collect every team-assigned boat (human + bots) before mutating.
+        let doomed: Vec<EntityIndex> = self
+            .player
+            .iter_borrow()
+            .filter_map(|p| {
+                if p.match_team.is_some() {
+                    if let Status::Alive { entity_index, .. } = p.status {
+                        return Some(entity_index);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // 2. Remove those boats from the world. DeathReason::Unknown
+        //    matches the handle_play_again precedent — boat-kind entities
+        //    panic on DeathReason::Debug in on_world_remove.
+        for idx in doomed {
+            self.world
+                .remove(idx, common::death_reason::DeathReason::Unknown);
         }
+
+        // 3. Clear per-player match state on every team-assigned player
+        //    (human + bots). Bots keep existing but are demoted to the
+        //    free-roam pool — their `game_mode` was never CaptureTheArea
+        //    to begin with, so `any_cta_player` correctly drops to false
+        //    once the human's mode flips below.
+        for mut p in self.player.iter_borrow_mut() {
+            if p.match_team.is_none() {
+                continue;
+            }
+            p.match_team = None;
+            p.match_slot = 0;
+            p.selected_loadout = None;
+            p.match_stats = PlayerMatchStats::default();
+            p.status = Status::Spawning;
+            p.flags = Flags::default();
+        }
+
+        // 4. Flip the quitting human back to Free Roam. Other humans
+        //    (shouldn't exist per single-player design, but defensively)
+        //    keep their current mode.
+        if let Some(mut human) = self.player.borrow_player_mut(player_id) {
+            human.game_mode = GameMode::FreeRoam;
+        }
+
+        // 5. Park match_state at Waiting. Bumps match_id so any in-flight
+        //    client MatchUpdates get discarded. The next CTA entry path
+        //    (tick loop at line ~793 or Spawn handler at line ~537) sees
+        //    `phase == Waiting` and runs the fresh-match bootstrap.
+        self.match_state.reset_to_waiting();
     }
 
     /// One-time cleanup of pre-existing static entities when a CTA

@@ -323,6 +323,29 @@ impl MatchState {
         self.ai_fleet = Fleet::random(&mut rng);
     }
 
+    /// Tear down the current match and return to Waiting. Preserves
+    /// match_id monotonicity so clients discard stale MatchUpdates.
+    ///
+    /// Unlike `reset()` (→ Countdown, used by Play Again), this leaves the
+    /// match dormant. The next time a player enters CTA mode, the tick
+    /// loop's `if phase == Waiting` branch picks it up and runs a full
+    /// `start_match() + assign_match_teams() + clear_statics()` bootstrap.
+    ///
+    /// Called from `handle_quit_to_title`. Does NOT touch per-player state
+    /// — the caller is responsible for clearing match_team and despawning
+    /// boats.
+    pub fn reset_to_waiting(&mut self) {
+        let mut rng = rand::thread_rng();
+        self.match_id = self.match_id.wrapping_add(1);
+        self.phase = MatchPhase::Waiting;
+        self.remaining = Duration::ZERO;
+        self.blue_score = 0;
+        self.red_score = 0;
+        self.blue_base_capture = Duration::ZERO;
+        self.red_base_capture = Duration::ZERO;
+        self.ai_fleet = Fleet::random(&mut rng);
+    }
+
     fn determine_winner(&self) -> Winner {
         match self.blue_score.cmp(&self.red_score) {
             std::cmp::Ordering::Greater => Winner::Blue,
@@ -599,6 +622,29 @@ mod tests {
         s.reset();
         assert_eq!(s.match_id, original_id + 1);
         assert_eq!(s.phase, MatchPhase::Countdown);
+        assert_eq!(s.blue_score, 0);
+        assert_eq!(s.red_score, 0);
+        assert_eq!(s.blue_base_capture, Duration::ZERO);
+        assert_eq!(s.red_base_capture, Duration::ZERO);
+    }
+
+    #[test]
+    fn reset_to_waiting_bumps_match_id_and_parks_in_waiting() {
+        // Simulate a full match that ended, then a quit-to-title teardown.
+        // reset_to_waiting must bump match_id (so stale client packets are
+        // discarded) and park the FSM at Waiting (so the next CTA entry
+        // runs the full bootstrap path in server.tick).
+        let mut s = playing_state();
+        s.blue_score = 300;
+        s.red_score = 120;
+        s.tick(MATCH_DURATION, std::iter::empty());
+        assert!(matches!(s.phase, MatchPhase::Ended { .. }));
+        let prior_id = s.match_id;
+
+        s.reset_to_waiting();
+        assert_eq!(s.phase, MatchPhase::Waiting);
+        assert_eq!(s.match_id, prior_id.wrapping_add(1));
+        assert_eq!(s.remaining, Duration::ZERO);
         assert_eq!(s.blue_score, 0);
         assert_eq!(s.red_score, 0);
         assert_eq!(s.blue_base_capture, Duration::ZERO);
