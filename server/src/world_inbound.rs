@@ -56,6 +56,31 @@ impl CommandTrait for Spawn {
             player.score = player.score.max(level_to_score(2));
         }
 
+        // Free Roam ship-picker — seed the starting score.
+        //
+        // The user explicitly picked this ship on the title screen. Bump
+        // their score up to the ship's level floor so can_spawn_as
+        // accepts it (in public-prod builds `free_points` is 0, so
+        // without this bump only Level 1 ships would spawn) and so the
+        // upgrade overlay shows the right next-level goal.
+        //
+        // Gated on `alias.is_some()` — present on title-screen Spawn,
+        // absent on mid-session Respawn (client/src/game.rs:1824). That
+        // keeps post-death respawn flow on its existing `respawn_score`
+        // + ShipMenu semantics: if you die at Level 10 you respawn near
+        // Level 8, pick a Level 8 ship, and your score is unchanged.
+        //
+        // `match_team.is_none()` scopes this to Free Roam — CTA already
+        // has its own bypass below (match_team check on can_spawn_as).
+        //
+        // `.max(..)` (not `=`) preserves higher existing scores — debug
+        // builds start everyone at level_to_score(MAX), and future code
+        // paths that pre-seed score stay compatible.
+        if player.match_team.is_none() && self.alias.is_some() {
+            let floor = level_to_score(self.entity_type.data().level);
+            player.score = player.score.max(floor);
+        }
+
         // Remember the picked ship for Capture the Area auto-respawns.
         // Free roam players use this harmlessly too — it's just a memo.
         player.selected_loadout = Some(self.entity_type);

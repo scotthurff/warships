@@ -42,7 +42,9 @@ enum TitleStep {
     /// Mode selector (Free Roam vs Capture the Area) + Continue button.
     ModeSelect,
     /// Ship picker with level tabs, stat detail, and Start Game button.
-    /// CTA only — Free Roam skips this step.
+    /// Both modes go through this — in Free Roam the picked ship's level
+    /// seeds the player's starting score (see server/src/world_inbound.rs
+    /// Spawn::apply). In CTA it picks the match loadout.
     ShipSelect,
 }
 
@@ -62,15 +64,14 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // Persists across re-renders of this component.
     let selected_mode = use_state(|| GameMode::FreeRoam);
 
-    // Currently-selected ship on the title screen. In Free Roam we ignore
-    // this and always spawn as G5 (the existing behavior). In Capture the
-    // Area the player picks a ship and that picks propagates into the
-    // `Spawn` command.
+    // Currently-selected ship on the title screen. Required in both
+    // modes — the ship propagates into the Spawn command's entity_type.
+    // In Free Roam it also seeds the starting score; in CTA it's the
+    // match loadout.
     let selected_ship = use_state::<Option<EntityType>, _>(|| None);
 
-    // Which step of the title flow we're on. Free Roam skips Step2 and
-    // spawns straight from Step1's Continue button. CTA proceeds to the
-    // ship picker.
+    // Which step of the title flow we're on. Both modes go through
+    // both steps: ModeSelect picks the mode, ShipSelect picks the ship.
     let title_step = use_state(|| TitleStep::ModeSelect);
 
     // Reset the three title-screen cells whenever the match_id bumps or
@@ -119,19 +120,14 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         let selected_ship = selected_ship.clone();
         Callback::from(move |entity_type: EntityType| selected_ship.set(Some(entity_type)))
     };
-    // "Continue" from the mode-select step. In CTA mode this advances
-    // to the ship picker step. In Free Roam it spawns immediately
-    // (Free Roam keeps the single-step flow — no ship picker).
+    // "Continue" from the mode-select step. Both modes advance to the
+    // ship picker — in Free Roam the picked ship determines the starting
+    // level (Spawn::apply seeds player.score to level_to_score(ship.level)
+    // for title-screen spawns). See plans/freeroam-ship-picker.md.
     let on_continue = {
-        let mode = *selected_mode;
         let title_step = title_step.clone();
-        let play_cb = on_play.clone();
         Callback::from(move |_: MouseEvent| {
-            if mode == GameMode::CaptureTheArea {
-                title_step.set(TitleStep::ShipSelect);
-            } else {
-                play_cb.emit(default_alias());
-            }
+            title_step.set(TitleStep::ShipSelect);
         })
     };
     // "Back" from the ship-select step.
@@ -319,15 +315,11 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                                     "
                                     onclick={on_continue}
                                 >
-                                    if *selected_mode == GameMode::CaptureTheArea {
-                                        {"Continue >"}
-                                    } else {
-                                        {"Start Game"}
-                                    }
+                                    {"Continue >"}
                                 </button>
                             </div>
                         } else {
-                            // ─── STEP 2: Ship picker (CTA only) ──────────────
+                            // ─── STEP 2: Ship picker (both modes) ────────────
                             <ShipPicker
                                 selected={*selected_ship}
                                 on_pick={on_ship_pick}
