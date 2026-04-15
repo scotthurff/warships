@@ -104,6 +104,12 @@ impl Server {
         // are discarded; phase returns to Countdown for the new intro.
         self.match_state.reset();
 
+        // Carve the arena again — procedural terrain could have been
+        // re-damaged mid-match (shells, torpedoes, depth charges all
+        // `TerrainMutation::conditional` the seabed/shore). Every
+        // match starts on a fresh flat arena.
+        self.flatten_cta_arena();
+
         info!(
             "match {} countdown starting (post play-again)",
             self.match_state.match_id
@@ -213,6 +219,52 @@ impl Server {
                 ),
                 None => break,
             }
+        }
+    }
+
+    /// Flatten terrain across the entire CTA arena so random procedural
+    /// generation can't leave islands / arctic shelves inside the
+    /// 1500-radius circle. Fixes "bots always crash into land within
+    /// their own territory" — the 1500 arena overlaps `ARCTIC = 1250`
+    /// on the northern arc, and local bot terrain repel is no match
+    /// for the 2.5-magnitude objective pull toward the enemy base.
+    /// See `plans/cta-carve-arena.md`.
+    ///
+    /// Called on every CTA match start (tick-loop bootstrap, Spawn-
+    /// handler bootstrap, and Play Again reset). One-shot O(r² / step²)
+    /// — ~18k calls per match start at step=20, each writing 4 pixels
+    /// via bilinear. Trivial relative to a full match tick budget.
+    ///
+    /// Uses `clamped` (not `simple`) with a large negative amount so
+    /// a chunk with high existing altitude is forced *below*
+    /// `SAND_LEVEL` rather than just nudged down by a fixed delta.
+    fn flatten_cta_arena(&mut self) {
+        use common::altitude::Altitude;
+        use common::terrain::TerrainMutation;
+
+        // Terrain SCALE is 25 m/pixel; step of 20 m ensures every pixel
+        // in the arena is touched by at least one bilinear mutation.
+        const CARVE_STEP: f32 = 20.0;
+        // Ceiling a bit below SAND_LEVEL(0) so no surface rocks peek through.
+        const CARVE_CEILING: Altitude = Altitude(-8);
+        // Large negative delta so `clamped` can drag anything above-water
+        // down past the ceiling on a single pass.
+        const CARVE_DELTA: f32 = -200.0;
+
+        let r = ArenaLayout::DEFAULT.arena_radius;
+        let mut y = -r;
+        while y <= r {
+            let half_width = (r.powi(2) - y.powi(2)).sqrt();
+            let mut x = -half_width;
+            while x <= half_width {
+                self.world.terrain.modify(TerrainMutation::clamped(
+                    kodiak_server::glam::Vec2::new(x, y),
+                    CARVE_DELTA,
+                    Altitude::MIN..=CARVE_CEILING,
+                ));
+                x += CARVE_STEP;
+            }
+            y += CARVE_STEP;
         }
     }
 
@@ -581,6 +633,7 @@ impl ArenaService for Server {
                         self.match_state.start_match();
                         self.assign_match_teams();
                         self.clear_statics();
+                        self.flatten_cta_arena();
                         info!(
                             "match {} started (via Spawn)",
                             self.match_state.match_id
@@ -840,6 +893,11 @@ impl ArenaService for Server {
                 // oil platforms, HQs) carried over from the prior free-
                 // roam session so the CTA arena starts clean.
                 self.clear_statics();
+                // Flatten any terrain inside the arena so bots can
+                // actually navigate to the enemy base without beaching
+                // on arctic ice or procedural islands. See plans/cta-
+                // carve-arena.md.
+                self.flatten_cta_arena();
                 info!(
                     "match {} started (Capture the Area)",
                     self.match_state.match_id
