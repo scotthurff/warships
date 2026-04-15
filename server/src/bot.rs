@@ -135,7 +135,15 @@ impl Bot {
             let spring = |weighted_sum: &mut Vec2, target_delta: Vec2, desired_distance: f32| {
                 let distance = target_delta.length();
                 let displacement = distance - desired_distance;
-                *weighted_sum = target_delta * displacement / (displacement.powi(2) + 1.0);
+                // += not = — every prior call (terrain samples, earlier
+                // contacts' springs/repels) needs to survive this one.
+                // The original `=` wiped the accumulated movement vector
+                // each time a spring fired, leaving the bot reacting
+                // only to whichever contact was last in iteration order.
+                // In CTA with 5 teammates that produced a circular
+                // chase — ships spring-locked toward each other and
+                // ignored the objective and terrain entirely.
+                *weighted_sum += target_delta * displacement / (displacement.powi(2) + 1.0);
             };
 
             // Terrain.

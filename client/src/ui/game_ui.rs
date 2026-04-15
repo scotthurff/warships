@@ -74,6 +74,12 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // both steps: ModeSelect picks the mode, ShipSelect picks the ship.
     let title_step = use_state(|| TitleStep::ModeSelect);
 
+    // Currently-selected difficulty. Seeded from the atomic global
+    // (which is the server-side source of truth) so reopening the
+    // title screen reflects the last choice. Each on_select_* handler
+    // below updates both this cell (for paint) and the global (for bots).
+    let selected_difficulty = use_state(common::Difficulty::get_global);
+
     // Reset the three title-screen cells whenever the match_id bumps or
     // match_update disappears. Two triggers land here:
     //   - Play Again on the server bumps match_id (still Some, new id).
@@ -162,6 +168,55 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         format!("{} color: #FCD34D; border: 2px solid #EAB308; border-left: 4px solid #EAB308;", tile_base)
     } else {
         format!("{} color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B;", tile_base)
+    };
+
+    // Difficulty buttons — mirror the mode-tile selected/unselected
+    // pattern so it's obvious which difficulty is active. Selected: full
+    // accent color + 2px border + 4px left stripe. Unselected: muted
+    // slate + thinner borders. Colors tuned per-difficulty to match the
+    // existing palette (green = Captain/easy, yellow = Admiral/medium,
+    // red = Fleet Cmdr/hard).
+    let diff_btn_base = "display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);";
+    let diff_unselected = "color: #94A3B8; border: 1px solid rgba(148,163,184,0.3); border-left: 3px solid #64748B;";
+    let cap_selected_style = common::Difficulty::Captain == *selected_difficulty;
+    let adm_selected_style = common::Difficulty::Admiral == *selected_difficulty;
+    let fc_selected_style = common::Difficulty::FleetCommander == *selected_difficulty;
+    let cap_style = if cap_selected_style {
+        format!("{} color: #4ADE80; border: 2px solid #22C55E; border-left: 4px solid #22C55E;", diff_btn_base)
+    } else {
+        format!("{} {}", diff_btn_base, diff_unselected)
+    };
+    let adm_style = if adm_selected_style {
+        format!("{} color: #FCD34D; border: 2px solid #EAB308; border-left: 4px solid #EAB308;", diff_btn_base)
+    } else {
+        format!("{} {}", diff_btn_base, diff_unselected)
+    };
+    let fc_style = if fc_selected_style {
+        format!("{} color: #F87171; border: 2px solid #EF4444; border-left: 4px solid #EF4444;", diff_btn_base)
+    } else {
+        format!("{} {}", diff_btn_base, diff_unselected)
+    };
+
+    let on_select_captain = {
+        let d = selected_difficulty.clone();
+        Callback::from(move |_: MouseEvent| {
+            common::Difficulty::set_global(common::Difficulty::Captain);
+            d.set(common::Difficulty::Captain);
+        })
+    };
+    let on_select_admiral = {
+        let d = selected_difficulty.clone();
+        Callback::from(move |_: MouseEvent| {
+            common::Difficulty::set_global(common::Difficulty::Admiral);
+            d.set(common::Difficulty::Admiral);
+        })
+    };
+    let on_select_fleet_cmdr = {
+        let d = selected_difficulty.clone();
+        Callback::from(move |_: MouseEvent| {
+            common::Difficulty::set_global(common::Difficulty::FleetCommander);
+            d.set(common::Difficulty::FleetCommander);
+        })
     };
 
     const SHOOT_HINT: &str = "First, select an available weapon. Then, click in the direction to fire. If you hold the click for too long, you won't shoot.";
@@ -282,18 +337,9 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                                 </div>
                                 // Difficulty selector — wargame style
                                 <div style="display: flex; gap: 10px;">
-                                    <button
-                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #4ADE80; border: 1px solid rgba(34,197,94,0.4); border-left: 3px solid #22C55E; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Captain); })}
-                                    >{"Captain"}</button>
-                                    <button
-                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #FCD34D; border: 1px solid rgba(234,179,8,0.3); border-left: 3px solid #EAB308; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::Admiral); })}
-                                    >{"Admiral"}</button>
-                                    <button
-                                        style="display: flex; align-items: center; justify-content: center; min-width: 140px; height: 48px; padding: 0 28px; background: rgba(15,23,42,0.92); color: #F87171; border: 1px solid rgba(239,68,68,0.3); border-left: 3px solid #EF4444; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
-                                        onclick={Callback::from(|_: MouseEvent| { common::Difficulty::set_global(common::Difficulty::FleetCommander); })}
-                                    >{"Fleet Cmdr"}</button>
+                                    <button style={cap_style} onclick={on_select_captain}>{"Captain"}</button>
+                                    <button style={adm_style} onclick={on_select_admiral}>{"Admiral"}</button>
+                                    <button style={fc_style} onclick={on_select_fleet_cmdr}>{"Fleet Cmdr"}</button>
                                 </div>
                                 // Continue button. Free Roam spawns immediately;
                                 // CTA advances to the ship picker step.
