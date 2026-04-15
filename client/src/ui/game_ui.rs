@@ -80,26 +80,33 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // below updates both this cell (for paint) and the global (for bots).
     let selected_difficulty = use_state(common::Difficulty::get_global);
 
-    // Reset the three title-screen cells whenever the match_id bumps or
-    // match_update disappears. Two triggers land here:
-    //   - Play Again on the server bumps match_id (still Some, new id).
-    //     The user stays in-game so this reset is invisible.
-    //   - Quit to Title on the server calls match_state.reset_to_waiting
-    //     which bumps match_id AND drops match_update to None for the
-    //     quitter. The user returns to the mode picker with no pre-
-    //     selected ship.
-    // Without this, title state persists across sessions and users land
-    // on the ship picker with a stale selection — or worse, the stuck
-    // state described in plans/fix-cta-match-reset-stuck-state.md.
+    // Reset the three title-screen cells when the user LEAVES a
+    // match (match_update transitions from Some back to None). Fires
+    // on Quit to Title so the next return to title lands on
+    // ModeSelect with no stale pre-selected ship.
+    //
+    // Does NOT fire when entering a match (None → Some). That was a
+    // regression: clicking Start Game bumps match_update from None
+    // to Some(new match_id), which fired the old dep and reset
+    // title_step to ModeSelect mid-transition — before UiStatus had
+    // moved from Spawning to Playing. The user briefly saw
+    // ModeSelect chrome overlaying gameplay.
+    //
+    // Play Again (match_update stays Some, match_id bumps) also no
+    // longer fires. Fine — the user is in-match during Play Again
+    // so title state is invisible; it gets reset on the next
+    // actual Quit-to-Title anyway.
     {
         let selected_mode = selected_mode.clone();
         let selected_ship = selected_ship.clone();
         let title_step = title_step.clone();
-        let session_key = props.match_update.as_ref().map(|m| m.match_id);
-        use_effect_with(session_key, move |_| {
-            selected_mode.set(GameMode::FreeRoam);
-            selected_ship.set(None);
-            title_step.set(TitleStep::ModeSelect);
+        let in_match = props.match_update.is_some();
+        use_effect_with(in_match, move |currently_in_match| {
+            if !*currently_in_match {
+                selected_mode.set(GameMode::FreeRoam);
+                selected_ship.set(None);
+                title_step.set(TitleStep::ModeSelect);
+            }
             || ()
         });
     }
@@ -252,6 +259,33 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
         html! {}
     };
 
+    // Ship name labels as HTML overlays. Replaces kodiak's WebGL
+    // bitmap-atlas text renderer (which pixellates at high zoom and
+    // uses a fixed bitmap font). Positions come pre-projected from
+    // the render loop in game.rs via Camera2d::to_client_position.
+    //
+    // `transform: translate(-50%, -100%)` centers each label
+    // horizontally on its anchor and pushes it up so the anchor sits
+    // at the bottom-center of the text — the ship position stays
+    // below the floating name, matching the prior WebGL behavior.
+    let ship_labels_html = {
+        let labels = props.ship_labels.iter().map(|l| {
+            let style = format!(
+                "position: fixed; left: {}px; top: {}px; transform: translate(-50%, -100%); \
+                 color: rgb({}, {}, {}); \
+                 font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; \
+                 font-size: 12px; font-weight: 700; \
+                 letter-spacing: 1px; text-transform: uppercase; \
+                 text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.6); \
+                 pointer-events: none; white-space: nowrap; \
+                 user-select: none; -webkit-user-select: none;",
+                l.x, l.y, l.color[0], l.color[1], l.color[2]
+            );
+            html! { <div style={style}>{&l.alias}</div> }
+        });
+        html! { <>{ for labels }</> }
+    };
+
     // Minimap: rendered whenever the match is active, regardless of
     // Playing vs Respawning vs Spawning status. Disappears on
     // `MatchPhase::Ended` since the results screen takes over.
@@ -267,6 +301,7 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
 
     html! {
         <>
+            { ship_labels_html }
             { countdown_html }
             { match_end_html }
             { minimap_html }
@@ -285,6 +320,21 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
                             { render_capture_bars(m) }
                         </div>
                     </Positioner>
+                    // In-match Quit button — top-right corner, red
+                    // danger styling so it's not accidentally tapped.
+                    // Reuses the existing QuitToTitle command path
+                    // (same handler as the match-end overlay button)
+                    // so the teardown semantics are shared. Rendered
+                    // here (inside the match_update.is_some() block)
+                    // so it only appears during CTA matches.
+                    <div style="position: fixed; top: 0.5rem; right: 0.5rem; z-index: 10;">
+                        <button
+                            style="display: flex; align-items: center; justify-content: center; min-width: 80px; height: 36px; padding: 0 14px; background: rgba(15,23,42,0.92); color: #F87171; border: 1px solid rgba(239,68,68,0.4); border-left: 3px solid #EF4444; border-radius: 2px; font-family: 'Menlo', 'SF Mono', 'Courier New', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.5);"
+                            onclick={gctw.send_ui_event_callback.reform(|_: MouseEvent| UiEvent::QuitToTitle)}
+                        >
+                            {"Quit"}
+                        </button>
+                    </div>
                 }
                 if let UiStatus::Playing(playing) = status {
                     <Positioner id="status" position={Position::BottomMiddle{margin: "0"}} max_width="45%">
@@ -587,6 +637,26 @@ pub struct UiProps {
     /// Snapshot of every visible ship for the CTA minimap. Empty in
     /// Free Roam.
     pub minimap_entries: Vec<MinimapEntry>,
+    /// Per-frame list of visible ship name labels to render as HTML
+    /// overlays (instead of the pixellated WebGL text layer). Each
+    /// carries pre-projected screen-space pixel coordinates and the
+    /// player-colored RGB. Refreshed every render.
+    pub ship_labels: Vec<ShipLabel>,
+}
+
+/// A ship name label pre-projected to screen space. Rendered as an
+/// absolutely-positioned HTML div so it uses the system font (Menlo)
+/// at crisp anti-aliased vector resolution instead of the WebGL
+/// bitmap-atlas font that pixellates at high zoom.
+#[derive(PartialEq, Clone)]
+pub struct ShipLabel {
+    /// X pixel (logical, DPI-adjusted) from the left edge of the canvas.
+    pub x: i32,
+    /// Y pixel (logical, DPI-adjusted) from the top edge of the canvas.
+    pub y: i32,
+    pub alias: String,
+    /// RGB color matching the team/player tint.
+    pub color: [u8; 3],
 }
 
 /// Mutually exclusive statuses.
@@ -656,6 +726,11 @@ impl Mk48Game {
             Vec::new()
         };
 
+        // Drain the per-frame ship label buffer. `std::mem::take`
+        // leaves an empty Vec in its place so the next frame's
+        // render loop starts clean.
+        let ship_labels = std::mem::take(&mut self.ship_labels);
+
         let props = UiProps {
             fps: self.fps_counter.last_sample().unwrap_or(0.0),
             score: context.state.game.score,
@@ -668,6 +743,7 @@ impl Mk48Game {
             match_update: context.state.game.match_update.clone(),
             last_spawn_entity: self.last_spawn_entity,
             minimap_entries,
+            ship_labels,
         };
 
         context.set_ui_props(props, in_game);

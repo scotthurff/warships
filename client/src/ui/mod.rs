@@ -23,6 +23,7 @@ pub(crate) mod touch_controls;
 pub(crate) mod upgrade_overlay;
 
 pub use game_ui::{
-    Mk48Route, Mk48Ui, UiEvent, UiProps, UiState, UiStatus, UiStatusPlaying, UiStatusRespawning,
+    Mk48Route, Mk48Ui, ShipLabel, UiEvent, UiProps, UiState, UiStatus, UiStatusPlaying,
+    UiStatusRespawning,
 };
 pub(crate) use phrases::Mk48Phrases;
