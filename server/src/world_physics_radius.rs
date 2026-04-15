@@ -168,12 +168,13 @@ impl World {
                         }
 
                         if !friendly {
-                            // Mines also gravitate towards boats (even submerged subs).
-                            if boats.len() == 1 && weapons.len() == 1 && weapons[0].data().sub_kind == EntitySubKind::Mine && weapons[0].is_in_proximity_to(boats[0], Entity::CLOSE_PROXIMITY) {
-                                let weapon_position = weapons[0].transform.position;
-                                let closest_point = boats[0].closest_point_on_keel_to(weapon_position, 1.0);
-                                mutate(weapons[0], Mutation::Attraction(closest_point - weapon_position, Velocity::from_mps(MINE_SPEED), boats[0].altitude - weapons[0].altitude));
-                            }
+                            // Note: upstream mk48 had mines gravitate
+                            // toward nearby boats within CLOSE_PROXIMITY
+                            // (60 m), effectively giving them a guided-
+                            // homing kill radius. Removed for Warships —
+                            // kid-friendly: mines only detonate on
+                            // direct SAT collision now. See
+                            // plans/mines-explode-only-on-contact.md.
 
                             // Make sure to consider case of 2 weapons, a SAM and a missile, not
                             // just the case of a weapon/aircraft and a non-weapon/aircraft target.
