@@ -164,6 +164,8 @@ impl Bot {
             // See plans/bot-state-machine-and-path-following.md.
             let mut closest_enemy: Option<(U::Contact, f32)> = None;
             let mut closest_enemy_pos: Option<Vec2> = None;
+            let mut nearest_teammate_pos: Option<Vec2> = None;
+            let mut nearest_teammate_dist_sq: f32 = f32::INFINITY;
             let mut incoming_torpedo: Option<crate::bot_behavior::TorpedoThreat> = None;
             let ship_pos = boat.transform().position;
             let ship_heading_vec = boat.transform().direction.to_vec();
@@ -186,6 +188,14 @@ impl Bot {
                     .map(|pid| self.cta_teammate_ids.contains(&pid))
                     .unwrap_or(false);
                 let friendly = same_self || on_my_team;
+
+                // Track nearest teammate for separation nudge.
+                if friendly && !same_self && contact_data.kind == EntityKind::Boat {
+                    if distance_squared < nearest_teammate_dist_sq {
+                        nearest_teammate_dist_sq = distance_squared;
+                        nearest_teammate_pos = Some(contact.transform().position);
+                    }
+                }
 
                 if !friendly {
                     match contact_data.kind {
@@ -255,6 +265,7 @@ impl Bot {
                     ship_speed,
                     ship_length: data.length,
                     closest_enemy: closest_enemy_pos,
+                    nearest_teammate: nearest_teammate_pos,
                     incoming_torpedo,
                     own_base: outer.own_base,
                     enemy_base: outer.enemy_base,

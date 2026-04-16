@@ -115,6 +115,13 @@ impl World {
         // Remember the player's CTA team (Copy'd) so the closure below
         // can decide whether "friendly" means "always visible".
         let player_match_team = player.match_team;
+        // CTA fog-off applies ONLY to human players — bots fall back
+        // to their normal sensor range. Previously applied to bots
+        // too, which gave them unlimited-range `closest_enemy`
+        // targeting and led to bots firing torpedoes at ships 2-3 km
+        // away well out of weapon range. is_bot() is a property of
+        // the PlayerId itself (bot IDs are distinct from human IDs).
+        let is_human = !player.is_bot();
         // In Capture the Area the player should see the ENTIRE
         // arena — every ship, teammate or enemy, always visible.
         // Reasons: (1) bots see everything anyway via their AI state,
@@ -160,19 +167,18 @@ impl World {
                     entity.player.is_some() && tuple == &**entity.player.as_ref().unwrap();
                 let friendly = entity.is_friendly_to_player(Some(tuple));
                 // CTA: every BOAT in the arena is "known" (visible
-                // on the main map regardless of sensor range, for
-                // both teammates AND enemies). Removes the asymmetric
-                // fog-of-war that bots bypass via AI state but humans
-                // had to play around. Single-player kid game — the
-                // fun is in engaging, not in hunting invisible ships.
-                // Weapons, decoys, obstacles still go through sensor
-                // logic (radar/sonar/visual uncertainty) so passive
-                // radar still matters for missile detection.
+                // on the main map regardless of sensor range) for
+                // the HUMAN player. Bots do NOT get this revelation
+                // — they fall back to their normal sensor-range
+                // uncertainty logic below, which keeps their
+                // `closest_enemy` truly local (not a ship 3 km away
+                // they can't realistically shoot at).
                 //
                 // Free Roam keeps the prior rule: teammates within
                 // 800 units, enemies via sensors only.
-                let cta_reveal_all_boats =
-                    player_match_team.is_some() && data.kind == EntityKind::Boat;
+                let cta_reveal_all_boats = is_human
+                    && player_match_team.is_some()
+                    && data.kind == EntityKind::Boat;
                 let known = same_player
                     || cta_reveal_all_boats
                     || (friendly

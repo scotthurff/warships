@@ -127,6 +127,12 @@ pub struct BehaviorInputs<'a> {
     /// Engaging state transitions.
     pub closest_enemy: Option<Vec2>,
 
+    /// World-space position of the nearest teammate boat within
+    /// 2× ship-length, if any. Used by the teammate-separation
+    /// perturbation — bots pathing the same flow field converge
+    /// on identical trajectories and collide without this.
+    pub nearest_teammate: Option<Vec2>,
+
     /// Torpedo (or equivalent weapon) on a collision heading
     /// within 1.5 ship-lengths, if any. Caller is responsible for
     /// the dot-product heuristic; this is just the threat info.
@@ -415,6 +421,12 @@ fn compute_output(state: &mut BehaviorState, inputs: &BehaviorInputs) -> Behavio
     // Bounded local perturbation: terrain repel (capped ≤20°).
     direction_angle = apply_terrain_repel(direction_angle, inputs);
 
+    // Teammate separation: small perpendicular nudge (≤15° cap)
+    // when a teammate is within 2× ship-length. Bots pathing the
+    // same flow field converge on the same trajectory — without
+    // this, they pile up and collide, forcing swerves into terrain.
+    direction_angle = apply_teammate_separation(direction_angle, inputs);
+
     // Torpedo dodge (one-shot, cooldown-gated).
     direction_angle = apply_torpedo_dodge_if_needed(direction_angle, inputs, state);
 
@@ -527,6 +539,27 @@ fn apply_terrain_repel(direction: Angle, inputs: &BehaviorInputs) -> Angle {
     direction + Angle::from_radians(rotation)
 }
 
+fn apply_teammate_separation(direction: Angle, inputs: &BehaviorInputs) -> Angle {
+    let Some(mate) = inputs.nearest_teammate else {
+        return direction;
+    };
+    let to_mate = mate - inputs.ship_pos;
+    let dist = to_mate.length();
+    if dist < 0.1 || dist > inputs.ship_length * 2.0 {
+        return direction;
+    }
+    // Rotate `direction` away from the teammate by up to 15°, with
+    // magnitude proportional to closeness (full 15° at touching,
+    // 0° at 2× ship-length).
+    let closeness = 1.0 - (dist / (inputs.ship_length * 2.0)).clamp(0.0, 1.0);
+    let cap_rad = 15f32.to_radians() * closeness;
+    let mate_dir = to_mate.normalize_or_zero();
+    let current_vec = direction.to_vec();
+    let cross_sign = current_vec.x * mate_dir.y - current_vec.y * mate_dir.x;
+    let rotation = if cross_sign > 0.0 { -cap_rad } else { cap_rad };
+    direction + Angle::from_radians(rotation)
+}
+
 fn apply_torpedo_dodge_if_needed(
     direction: Angle,
     inputs: &BehaviorInputs,
@@ -607,6 +640,7 @@ mod tests {
             ship_speed: 0.0,
             ship_length: 30.0,
             closest_enemy: None,
+            nearest_teammate: None,
             incoming_torpedo: None,
             own_base: Vec2::new(0.0, 1000.0),
             enemy_base: Vec2::new(0.0, -1000.0),
@@ -632,6 +666,7 @@ mod tests {
             ship_speed: 10.0,
             ship_length: 30.0,
             closest_enemy: None, // enemy gone
+            nearest_teammate: None,
             incoming_torpedo: None,
             own_base: Vec2::new(0.0, 1000.0),
             enemy_base: Vec2::new(0.0, -1000.0),
@@ -664,6 +699,7 @@ mod tests {
             ship_speed: 10.0,
             ship_length: 30.0,
             closest_enemy: None,
+            nearest_teammate: None,
             incoming_torpedo: None,
             own_base: Vec2::new(0.0, 1000.0),
             enemy_base: Vec2::new(0.0, -1000.0),
@@ -705,6 +741,7 @@ mod tests {
             ship_speed: 10.0,
             ship_length: 30.0,
             closest_enemy: None,
+            nearest_teammate: None,
             incoming_torpedo: None,
             own_base: Vec2::new(0.0, 1000.0),
             enemy_base: Vec2::new(0.0, -1000.0),
