@@ -161,6 +161,31 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     let margin = "0.5rem";
     let status = props.status.clone();
 
+    // Spawn-retry: if the player clicks Start Game but the server
+    // can't find a spawn slot (CTA pentagon slot overlapping a bot
+    // or a surviving sparsen island), the server logs "failed to
+    // find enough space to spawn" and the player's status stays
+    // `Spawning`. Without retry, the ship-picker overlay sticks
+    // forever because its visibility gate is `UiStatus::Spawning`.
+    // Emit the Spawn command every 2 s until the server puts the
+    // player `Alive` (status transitions out of Spawning). The
+    // interval is dropped automatically when the effect's deps
+    // change (e.g. status → Playing → deps flip → cleanup runs).
+    {
+        let play_cb = on_play.clone();
+        let spawning = matches!(status, UiStatus::Spawning);
+        let at_picker = *title_step == TitleStep::ShipSelect;
+        use_effect_with((spawning, at_picker), move |(spawning, at_picker)| {
+            if !(*spawning && *at_picker) {
+                return Box::new(|| ()) as Box<dyn FnOnce()>;
+            }
+            let interval = gloo_timers::callback::Interval::new(2000, move || {
+                play_cb.emit(default_alias());
+            });
+            Box::new(move || drop(interval)) as Box<dyn FnOnce()>
+        });
+    }
+
     // Mode-selector tile styling (computed outside html! since Yew's macro
     // doesn't allow bare `let` statements inside its JSX block).
     let free_selected = *selected_mode == GameMode::FreeRoam;
