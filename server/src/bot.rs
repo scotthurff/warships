@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Softbear, Inc.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::player::Status;
 use crate::server::Server;
 use common::altitude::Altitude;
 use common::angle::Angle;
@@ -13,8 +12,6 @@ use common::protocol::*;
 use common::terrain;
 use common::terrain::Terrain;
 use kodiak_server::glam::Vec2;
-#[cfg(debug_assertions)]
-use kodiak_server::log::info;
 use kodiak_server::rand::rngs::ThreadRng;
 use kodiak_server::rand::seq::IteratorRandom;
 use kodiak_server::rand::{thread_rng, Rng};
@@ -46,15 +43,6 @@ pub struct Bot {
     /// for offense, or own base if it's being captured (defense).
     /// `None` in Free Roam.
     cta_movement_target: Option<Vec2>,
-    /// Index into the bot's attack waypoint route. Monotonically
-    /// advances — never goes backward, even if the bot gets pushed
-    /// off-route. Reset to 0 on death/respawn (when the outer update
-    /// detects Status::Spawning) or when the bot switches to defense.
-    /// Without this state the "circle bug" happens: a stateless
-    /// "first wp > N m away" picker sends an off-route bot back to
-    /// WP0, which it reaches, advances, drifts, is sent back to WP0
-    /// again — forever.
-    cta_waypoint_idx: u8,
 }
 
 impl Default for Bot {
@@ -93,136 +81,8 @@ impl Default for Bot {
             was_submerging: false,
             cta_teammate_ids: Vec::new(),
             cta_movement_target: None,
-            cta_waypoint_idx: 0,
         }
     }
-}
-
-// ─── Waypoint routing for CTA bots ──────────────────────────────────
-//
-// CTA terrain is fully deterministic — fixed noise seed at
-// `server/src/noise.rs:12` (SEED = 42700.0) plus a pure noise
-// generator. Every match has the same islands in the same positions,
-// so routing can be hand-authored rather than computed via a real
-// pathfinder. ~30 LOC instead of ~300 for a flow-field pathfinder.
-// See `plans/cta-bot-pathfinding.md` for the full analysis and the
-// plan that would replace this if hand-waypoints prove insufficient.
-//
-// Waypoints are listed for Blue's attack southward to the Red base.
-// Red uses the Y-mirror of the same route — symmetric arena, symmetric
-// geometry. Two route variants (east-flank / west-flank) spread the
-// team across both sides of the central island landmass. Slot parity
-// selects which variant each bot takes (majority east, rest west).
-//
-// If the terrain seed ever changes, re-dump the arena and re-pick
-// these coordinates. Recipe at `server/src/noise.rs` history (the
-// ASCII-map dump test that was used once to pick these).
-
-// Blue routes: attacking south toward Red base.
-// Picked from the actual ASCII dump of the arena. The Blue base
-// pocket opens south via a narrow x=+50 corridor.
-
-/// Blue east-flank attack route.
-const BLUE_ATTACK_EAST: &[Vec2] = &[
-    Vec2::new(50.0, 300.0),     // exit base via narrow south corridor
-    Vec2::new(50.0, 100.0),     // past the sub-island at (100, 250)
-    Vec2::new(400.0, 100.0),    // turn east ALONG y=+100 in clear water
-    Vec2::new(400.0, -100.0),   // south into open midfield
-    Vec2::new(400.0, -350.0),   // past center island's south arm
-    Vec2::new(200.0, -450.0),   // approach Red base from NE
-    Vec2::new(0.0, -500.0),     // Red base
-];
-
-/// Blue west-flank attack route.
-const BLUE_ATTACK_WEST: &[Vec2] = &[
-    Vec2::new(50.0, 300.0),     // shared south-corridor exit
-    Vec2::new(50.0, 100.0),
-    Vec2::new(-300.0, 50.0),    // turn west at y=+50
-    Vec2::new(-500.0, 0.0),
-    Vec2::new(-500.0, -300.0),
-    Vec2::new(-200.0, -450.0),
-    Vec2::new(0.0, -500.0),
-];
-
-// Red routes: attacking north toward Blue base. NOT a simple Y-mirror
-// of Blue's routes — the terrain isn't Y-symmetric, so the final
-// approach to Blue base needs its own waypoints. Blue base opens
-// south via the same narrow x=+50 corridor Blue bots exit through,
-// which is also Red's entry point. Red must thread that corridor
-// from the south (y~+150 → y~+400 at x=+50) to reach the base.
-
-/// Red east-flank attack route (attacking Blue base from south-east).
-const RED_ATTACK_EAST: &[Vec2] = &[
-    Vec2::new(50.0, -300.0),    // exit Red base
-    Vec2::new(50.0, -100.0),
-    Vec2::new(400.0, -100.0),
-    Vec2::new(400.0, 100.0),    // up the east corridor
-    Vec2::new(200.0, 150.0),    // turn NW toward Blue base entry
-    Vec2::new(50.0, 150.0),     // at Blue base south-corridor entry
-    Vec2::new(50.0, 400.0),     // up the corridor itself
-    Vec2::new(0.0, 500.0),      // Blue base
-];
-
-/// Red west-flank attack route (attacking Blue base from south-west).
-const RED_ATTACK_WEST: &[Vec2] = &[
-    Vec2::new(50.0, -300.0),    // shared exit
-    Vec2::new(50.0, -100.0),
-    Vec2::new(-300.0, -50.0),   // turn west
-    Vec2::new(-500.0, 0.0),
-    Vec2::new(-500.0, 150.0),   // ascend west flank to y=+150
-    Vec2::new(-150.0, 150.0),   // east across y=+150 (clear water)
-    Vec2::new(50.0, 150.0),     // Blue base south-corridor entry
-    Vec2::new(50.0, 400.0),     // up the corridor
-    Vec2::new(0.0, 500.0),      // Blue base
-];
-
-/// Distance at which a bot considers a waypoint "reached" and advances
-/// to the next. Tightened from 400 m → 150 m because the previous
-/// value caused bots to skip ALL the intermediate exit-the-base
-/// waypoints on spawn (they sit within 400 m of the first 2-3
-/// waypoints simultaneously) and head straight to midfield — through
-/// the base arms and the central island. 150 m ≈ half a Level-10
-/// ship-length, which commits the bot to each corner properly.
-const WAYPOINT_ARRIVED_RADIUS: f32 = 150.0;
-
-/// Returns the attack route for a given team + slot. Separate
-/// Blue→Red and Red→Blue routes because the arena terrain isn't
-/// Y-symmetric; each team's final approach to the enemy base has
-/// to thread that base's specific opening.
-fn attack_route_for(team: crate::match_state::Team, slot: u8) -> &'static [Vec2] {
-    use crate::match_state::Team;
-    match (team, slot % 2) {
-        (Team::Blue, 0) => BLUE_ATTACK_EAST,
-        (Team::Blue, _) => BLUE_ATTACK_WEST,
-        (Team::Red, 0) => RED_ATTACK_EAST,
-        (Team::Red, _) => RED_ATTACK_WEST,
-    }
-}
-
-/// Stateful waypoint selection. Given the current waypoint index the
-/// bot is tracking, advances `idx` past any waypoints we've arrived
-/// at (within `WAYPOINT_ARRIVED_RADIUS`) and returns the current
-/// target. Crucially, `idx` only ever increases — a bot pushed off-
-/// route stays targeting the same forward waypoint rather than
-/// snapping back to WP0.
-fn next_attack_waypoint_stateful(
-    team: crate::match_state::Team,
-    slot: u8,
-    bot_pos: Vec2,
-    idx: &mut u8,
-) -> Vec2 {
-    let route: &[Vec2] = attack_route_for(team, slot);
-    let last = route.len() - 1;
-    let arrive_sq = WAYPOINT_ARRIVED_RADIUS * WAYPOINT_ARRIVED_RADIUS;
-    while (*idx as usize) < last {
-        let wp = route[*idx as usize];
-        if bot_pos.distance_squared(wp) < arrive_sq {
-            *idx += 1;
-        } else {
-            break;
-        }
-    }
-    route[(*idx as usize).min(last)]
 }
 
 impl Bot {
@@ -645,110 +505,37 @@ impl kodiak_server::Bot<Server> for Bot {
                 }
             }
 
-            // Gather inputs for waypoint / defense target selection.
-            // We resolve these with immutable borrows first, then take
-            // the single mutable borrow on the bot state below to
-            // update all the CTA-awareness fields atomically.
-            struct Inputs {
-                target: Option<Vec2>,
-                reset_waypoint_idx: bool,
-            }
-            let inputs: Inputs = match my_match_team {
-                None => Inputs { target: None, reset_waypoint_idx: true },
-                Some(team) => {
-                    use crate::match_state::ArenaLayout;
-                    let m = &server.match_state;
-                    let (own_base, defense_progress_ms) = match team {
-                        crate::match_state::Team::Blue => {
-                            (ArenaLayout::DEFAULT.blue_base, m.blue_base_capture.as_millis())
-                        }
-                        crate::match_state::Team::Red => {
-                            (ArenaLayout::DEFAULT.red_base, m.red_base_capture.as_millis())
-                        }
-                    };
-                    if defense_progress_ms > 5_000 {
-                        // Defending — reset waypoint index so that when
-                        // we resume offense the bot starts from WP0.
-                        Inputs {
-                            target: Some(own_base),
-                            reset_waypoint_idx: true,
-                        }
-                    } else {
-                        let p = player_tuple.borrow_player();
-                        let slot = p.match_slot;
-                        match p.status {
-                            Status::Alive { entity_index, .. } => {
-                                let bot_pos =
-                                    server.world.entities[entity_index].transform.position;
-                                let mut idx = player
-                                    .inner
-                                    .bot()
-                                    .map(|b| b.cta_waypoint_idx)
-                                    .unwrap_or(0);
-                                let wp = next_attack_waypoint_stateful(
-                                    team, slot, bot_pos, &mut idx,
-                                );
-                                // Store the advanced idx back into the
-                                // bot state (not reset).
-                                if let Some(bot_state) = player.inner.bot_mut() {
-                                    bot_state.cta_waypoint_idx = idx;
-                                }
-                                Inputs {
-                                    target: Some(wp),
-                                    reset_waypoint_idx: false,
-                                }
-                            }
-                            _ => {
-                                // Dead or spawning: pick up from WP0
-                                // when we come back. No target needed.
-                                Inputs {
-                                    target: Some(own_base),
-                                    reset_waypoint_idx: true,
-                                }
-                            }
-                        }
-                    }
+            // Pick a movement target. If our base is being captured
+            // (>5s of enemy capture progress), defend at own base;
+            // otherwise push the enemy base directly. Routing is
+            // currently straight-line — the flow-field pathfinding
+            // (Phase 1 of plans/cta-bot-pathfinding.md, next commit)
+            // will replace this with a terrain-aware sample.
+            let movement_target: Option<Vec2> = my_match_team.map(|team| {
+                use crate::match_state::ArenaLayout;
+                let m = &server.match_state;
+                let (own_base, enemy_base, defense_progress_ms) = match team {
+                    crate::match_state::Team::Blue => (
+                        ArenaLayout::DEFAULT.blue_base,
+                        ArenaLayout::DEFAULT.red_base,
+                        m.blue_base_capture.as_millis(),
+                    ),
+                    crate::match_state::Team::Red => (
+                        ArenaLayout::DEFAULT.red_base,
+                        ArenaLayout::DEFAULT.blue_base,
+                        m.red_base_capture.as_millis(),
+                    ),
+                };
+                if defense_progress_ms > 5_000 {
+                    own_base
+                } else {
+                    enemy_base
                 }
-            };
+            });
 
             let bot_state = player.inner.bot_mut().unwrap();
             bot_state.cta_teammate_ids = teammate_ids;
-            bot_state.cta_movement_target = inputs.target;
-            if inputs.reset_waypoint_idx {
-                bot_state.cta_waypoint_idx = 0;
-            }
-
-            // Rate-limited debug log of bot path state (every ~100
-            // ticks = 10 s at 10 Hz). Temporary instrumentation for
-            // diagnosing pathing failures. Remove once bots reliably
-            // follow the waypoint route.
-            #[cfg(debug_assertions)]
-            {
-                use std::sync::atomic::{AtomicU32, Ordering};
-                static COUNT: AtomicU32 = AtomicU32::new(0);
-                let n = COUNT.fetch_add(1, Ordering::Relaxed);
-                if n % 100 == 0 {
-                    if let Some(team) = my_match_team {
-                        let p = player_tuple.borrow_player();
-                        let bot_pos = match p.status {
-                            Status::Alive { entity_index, .. } => {
-                                server.world.entities[entity_index].transform.position
-                            }
-                            _ => Vec2::ZERO,
-                        };
-                        info!(
-                            "bot {} team={:?} slot={} idx={} pos=({:.0},{:.0}) target={:?}",
-                            p.alias.as_str(),
-                            team,
-                            p.match_slot,
-                            bot_state.cta_waypoint_idx,
-                            bot_pos.x,
-                            bot_pos.y,
-                            inputs.target.map(|t| (t.x as i32, t.y as i32)),
-                        );
-                    }
-                }
-            }
+            bot_state.cta_movement_target = movement_target;
         }
 
         let update = server.world.get_player_complete(player_tuple);
