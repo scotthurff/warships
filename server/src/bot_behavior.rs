@@ -148,6 +148,14 @@ pub struct BehaviorInputs<'a> {
     /// teammate — caller computes the short-circuit).
     pub is_top_3_defender: bool,
 
+    /// "Rusher" trait — when true, this bot ignores nearby enemies
+    /// while within the final-push radius of the enemy base and
+    /// drives for the capture ring. Roughly 35% of bots are
+    /// rushers; the rest engage in combat as usual. Mixed-team
+    /// behavior means some bots push objectives while others
+    /// skirmish at midfield.
+    pub prefers_rush: bool,
+
     /// Terrain sample source for the close-range land repel.
     pub terrain: &'a Terrain,
     /// World border. Ships must stay inside this radius.
@@ -303,14 +311,31 @@ fn next_state(state: &BehaviorState, inputs: &BehaviorInputs) -> Option<State> {
             {
                 return Some(State::Defending);
             }
+
+            // Rusher override — when within the final-push radius
+            // of the enemy base AND this bot is flagged as a
+            // rusher, ignore nearby enemies and stay in the
+            // committing-Transiting push. The other ~65% of bots
+            // behave normally (enter Engaging on enemy visibility).
+            let in_commit_range = (inputs.ship_pos - inputs.enemy_base).length()
+                < COMMIT_RADIUS;
+            let rusher_pushing = inputs.prefers_rush && in_commit_range;
+
             // Engaging ↔ Transiting.
             if matches!(state.state, State::Engaging) {
+                // Rusher that's entered the commit radius exits
+                // Engaging immediately (no hold-out) — there's a
+                // capture to finish.
+                if rusher_pushing {
+                    return Some(State::Transiting { committing: true });
+                }
                 if inputs.closest_enemy.is_none()
                     && state.ticks_enemy_out >= ENGAGE_EXIT_TICKS
                 {
                     return Some(State::Transiting { committing: false });
                 }
-            } else if inputs.closest_enemy.is_some()
+            } else if !rusher_pushing
+                && inputs.closest_enemy.is_some()
                 && state.ticks_engage_pending >= ENGAGE_ENTER_TICKS
             {
                 return Some(State::Engaging);
@@ -653,6 +678,7 @@ mod tests {
             enemy_base: Vec2::new(0.0, -1000.0),
             own_base_capture_ms: 0,
             is_top_3_defender: false,
+            prefers_rush: false,
             terrain: &terrain,
             world_radius: 3000.0,
         };
@@ -679,6 +705,7 @@ mod tests {
             enemy_base: Vec2::new(0.0, -1000.0),
             own_base_capture_ms: 0,
             is_top_3_defender: false,
+            prefers_rush: false,
             terrain: &terrain,
             world_radius: 3000.0,
         };
@@ -711,7 +738,8 @@ mod tests {
             own_base: Vec2::new(0.0, 1000.0),
             enemy_base: Vec2::new(0.0, -1000.0),
             own_base_capture_ms: 15_000, // well over threshold
-            is_top_3_defender: false,    // but not a defender
+            is_top_3_defender: false,
+            prefers_rush: false,    // but not a defender
             terrain: &terrain,
             world_radius: 3000.0,
         };
@@ -725,6 +753,7 @@ mod tests {
 
         let inputs_top3 = BehaviorInputs {
             is_top_3_defender: true,
+            prefers_rush: false,
             ..inputs_not_top3
         };
         // Need DEFEND_ENTER_TICKS ticks.
@@ -754,6 +783,7 @@ mod tests {
             enemy_base: Vec2::new(0.0, -1000.0),
             own_base_capture_ms: 0,
             is_top_3_defender: false,
+            prefers_rush: false,
             terrain: &terrain,
             world_radius: 3000.0,
         };

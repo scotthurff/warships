@@ -73,6 +73,14 @@ pub struct Bot {
     /// update (state transitions + carrot steering). `pub` so the
     /// outer update in server.rs can plan paths.
     pub behavior_state: crate::bot_behavior::BehaviorState,
+    /// ~35% of bots are "rushers" — when within 700 m of the
+    /// enemy base, they ignore nearby enemies and push through to
+    /// the capture ring. The other 65% behave as today: engage at
+    /// midfield, orbit the closest enemy at ~200 m. Mixed-team
+    /// behavior means some bots commit to the objective while
+    /// others hold the line. Set randomly at Bot construction and
+    /// persists across lives.
+    pub prefers_rush: bool,
 }
 
 impl Default for Bot {
@@ -115,6 +123,7 @@ impl Default for Bot {
             cta_stuck_ticks: 0,
             pending_speed_scale: 1.0,
             behavior_state: crate::bot_behavior::BehaviorState::default(),
+            prefers_rush: rng.gen_bool(0.35),
         }
     }
 }
@@ -271,6 +280,7 @@ impl Bot {
                     enemy_base: outer.enemy_base,
                     own_base_capture_ms: outer.own_base_capture_ms,
                     is_top_3_defender: outer.is_top_3_defender,
+                    prefers_rush: self.prefers_rush,
                     terrain,
                     world_radius: update.world_radius(),
                 };
