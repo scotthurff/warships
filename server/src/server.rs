@@ -248,8 +248,10 @@ impl Server {
         use crate::bot_pathfinder::FlowField;
         let blue_base = ArenaLayout::DEFAULT.blue_base;
         let red_base = ArenaLayout::DEFAULT.red_base;
+        let t0 = std::time::Instant::now();
         self.flow_to_blue = Some(FlowField::build(&self.world.terrain, blue_base));
         self.flow_to_red = Some(FlowField::build(&self.world.terrain, red_base));
+        info!("flow fields built in {:?}", t0.elapsed());
         #[cfg(debug_assertions)]
         self.cta_contested_zone_visitors.clear();
     }

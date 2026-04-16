@@ -48,11 +48,17 @@ pub const GRID_SIZE: usize = 128;
 /// closes those corridors on at least one side and Dijkstra can't
 /// reach outside the pocket.
 ///
-/// 0 = no inflation. Bot's short-range terrain repel (on the force
-/// field in `bot.rs`) handles beam clearance. If playtests show
-/// ships clipping corners on a flow heading, bump up the local
-/// repel strength there before touching this.
-pub const INFLATION_CELLS: usize = 0;
+/// 2 cells = 50 m margin around every obstacle. Needed for momentum:
+/// a Level-10 Iowa (270 m long, 13 m/s cruise) can't turn sharply
+/// enough to dodge terrain that's only 25 m away when it arrives at
+/// a cell-boundary heading. 1-cell margin let bots clip terrain that
+/// was ahead of them by one cell; 2-cell margin gives an extra
+/// second of reaction time.
+///
+/// The 2-cell inflation DOES close the narrow base-exit corridor
+/// (x=+50, 1 cell wide at some rows). GOAL_CLEAR_RADIUS below
+/// force-opens the corridor AFTER inflation, keeping it passable.
+pub const INFLATION_CELLS: usize = 2;
 
 /// Sentinel for "unreachable" in the integration field. Internal.
 const IMPASSABLE_COST: u16 = u16::MAX;
@@ -95,25 +101,47 @@ impl FlowField {
             }
         }
 
+        // Save the raw cost before inflation so we can distinguish
+        // "cell blocked by terrain" from "cell blocked by inflation."
+        let raw_cost = cost.clone();
+
         // Inflate blocked cells by INFLATION_CELLS (Chebyshev dilation).
         inflate(&mut cost, INFLATION_CELLS);
 
-        // Force a small open neighborhood around the goal. The CTA
-        // bases are always water by game design (ships spawn there),
-        // but the noise generator sometimes returns a near-threshold
-        // altitude at the exact base pixel. Clearing a 5-cell (125 m)
-        // Chebyshev radius around the goal guarantees Dijkstra has a
-        // reachable seed AND that bots arriving near the base can
-        // still get flow guidance instead of hitting IMPASSABLE.
-        // Radius matches the ArenaLayout's 250 m base_radius / 2.
-        const GOAL_CLEAR_RADIUS: isize = 5;
+        // Two-zone goal clear:
+        //
+        // INNER (3 cells = 75 m): force-open ALL cells regardless
+        // of terrain. The base center IS water per the game (ships
+        // spawn there) but terrain.sample returns near-threshold
+        // altitude at the exact pixel, which my is_blocked treats
+        // as land. Without this, the Dijkstra seed is blocked and
+        // the entire field is IMPASSABLE (zero reachable cells).
+        //
+        // OUTER (14 cells = 350 m): undo inflation only. Re-opens
+        // cells that were water in the raw terrain but got blocked
+        // by the 1-cell dilation — specifically the narrow base-
+        // exit corridor at x=+50. Actual land stays blocked so the
+        // flow field doesn't route bots through the base's land
+        // arms (where they'd take terrain damage and die).
+        const GOAL_INNER_RADIUS: isize = 3;
+        const GOAL_OUTER_RADIUS: isize = 14;
         let (gx, gy) = world_to_cell(goal);
-        for dy in -GOAL_CLEAR_RADIUS..=GOAL_CLEAR_RADIUS {
-            for dx in -GOAL_CLEAR_RADIUS..=GOAL_CLEAR_RADIUS {
+        for dy in -GOAL_OUTER_RADIUS..=GOAL_OUTER_RADIUS {
+            for dx in -GOAL_OUTER_RADIUS..=GOAL_OUTER_RADIUS {
                 let x = gx as isize + dx;
                 let y = gy as isize + dy;
-                if in_bounds(x, y) {
-                    cost[index(x as usize, y as usize)] = 1;
+                if !in_bounds(x, y) {
+                    continue;
+                }
+                let idx = index(x as usize, y as usize);
+                let in_inner = dx.abs() <= GOAL_INNER_RADIUS
+                    && dy.abs() <= GOAL_INNER_RADIUS;
+                if in_inner {
+                    // Base vicinity — force open.
+                    cost[idx] = 1;
+                } else if raw_cost[idx] != 0 {
+                    // Corridor — undo inflation only, keep real land.
+                    cost[idx] = 1;
                 }
             }
         }
@@ -452,5 +480,50 @@ mod tests {
             b_dir,
             r_dir,
         );
+    }
+}
+
+#[cfg(test)]
+mod debug_connectivity {
+    use super::*;
+    use crate::noise::{init, noise_generator};
+    use common::terrain::Terrain;
+
+    #[test]
+    #[ignore]
+    fn dump_blue_field_reachability() {
+        init();
+        let t = Terrain::with_generator(noise_generator);
+        let f = FlowField::build(&t, Vec2::new(0.0, 500.0));
+        let mut reachable = 0;
+        let mut blocked = 0;
+        for y in 0..GRID_SIZE {
+            for x in 0..GRID_SIZE {
+                if f.integration[index(x, y)] < IMPASSABLE_COST {
+                    reachable += 1;
+                } else {
+                    blocked += 1;
+                }
+            }
+        }
+        println!("Blue field: {} reachable, {} blocked", reachable, blocked);
+        // Sample a few key points
+        for (wx, wy, label) in [
+            (0.0, 500.0, "Blue base"),
+            (50.0, 300.0, "corridor y=300"),
+            (50.0, 150.0, "corridor y=150"),
+            (50.0, 50.0, "corridor y=50"),
+            (200.0, 0.0, "midfield east"),
+            (600.0, 0.0, "east corridor"),
+            (-500.0, 0.0, "west corridor"),
+        ] {
+            let (cx, cy) = world_to_cell(Vec2::new(wx, wy));
+            let cost = if cx < GRID_SIZE && cy < GRID_SIZE {
+                f.integration[index(cx, cy)]
+            } else { u16::MAX };
+            let flow = f.sample(Vec2::new(wx, wy));
+            println!("  {:>20} ({:>5},{:>5}) cell=({:>3},{:>3}) integration={:>5} flow={:?}",
+                label, wx, wy, cx, cy, cost, flow);
+        }
     }
 }

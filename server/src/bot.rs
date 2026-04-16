@@ -564,15 +564,20 @@ impl kodiak_server::Bot<Server> for Bot {
                     // defenders sample the field pointing at their
                     // own base. If not alive (Spawning/Dead), no
                     // bot_pos to sample at — leave flow None.
-                    // Alive → (position, speed). Dead/Spawning →
-                    // leave flow None and reset stuck counter so
-                    // the next spawn starts fresh.
-                    let alive_state: Option<(Vec2, f32)> = {
+                    // Alive → (position, heading, speed). Dead/Spawning
+                    // → leave flow None and reset stuck counter so the
+                    // next spawn starts fresh.
+                    let alive_state: Option<(Vec2, Vec2, f32)> = {
                         let p = player_tuple.borrow_player();
                         match p.status {
                             Status::Alive { entity_index, .. } => {
                                 let e = &server.world.entities[entity_index];
-                                Some((e.transform.position, e.transform.velocity.to_mps()))
+                                let speed = e.transform.velocity.to_mps();
+                                Some((
+                                    e.transform.position,
+                                    e.transform.direction.to_vec(),
+                                    speed,
+                                ))
                             }
                             _ => None,
                         }
@@ -589,12 +594,31 @@ impl kodiak_server::Bot<Server> for Bot {
                             crate::match_state::Team::Red => server.flow_to_blue.as_ref(),
                         }
                     };
-                    let flow_direction = alive_state
-                        .and_then(|(pos, _)| field.and_then(|f| f.sample(pos)));
+
+                    // LOOK-AHEAD SAMPLING: sample the flow field at
+                    // where the ship will be in LOOKAHEAD_SECS, not
+                    // where it is now. Ship-like agents need temporal
+                    // headroom for momentum + turning radius; a
+                    // current-position sample produces steering
+                    // commands that arrive too late to turn before
+                    // the next cell. Standard technique in RTS games
+                    // with ship kinematics (SupCom 2, Homeworld).
+                    //
+                    // Falls back to current-position sample if the
+                    // look-ahead point is outside the grid or on a
+                    // blocked cell. Falls back again to None if both
+                    // fail; caller uses direct-to-goal.
+                    const LOOKAHEAD_SECS: f32 = 1.5;
+                    let flow_direction = alive_state.and_then(|(pos, heading, speed)| {
+                        field.and_then(|f| {
+                            let ahead = pos + heading * speed * LOOKAHEAD_SECS;
+                            f.sample(ahead).or_else(|| f.sample(pos))
+                        })
+                    });
 
                     let stuck_ticks_delta = match alive_state {
                         None => StuckDelta::Reset,
-                        Some((_, speed)) if speed < 1.0 => StuckDelta::Increment,
+                        Some((_, _, speed)) if speed < 1.0 => StuckDelta::Increment,
                         Some(_) => StuckDelta::Reset,
                     };
 
@@ -628,6 +652,35 @@ impl kodiak_server::Bot<Server> for Bot {
             } else {
                 inputs.flow_direction
             };
+
+            // Rate-limited debug log.
+            #[cfg(debug_assertions)]
+            {
+                use kodiak_server::log::info;
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static COUNT: AtomicU32 = AtomicU32::new(0);
+                if COUNT.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+                    if let Some(team) = my_match_team {
+                        let p = player_tuple.borrow_player();
+                        let pos = match p.status {
+                            Status::Alive { entity_index, .. } => {
+                                let e = &server.world.entities[entity_index];
+                                format!("({:.0},{:.0}) spd={:.1}", e.transform.position.x, e.transform.position.y, e.transform.velocity.to_mps())
+                            }
+                            _ => "dead".to_string(),
+                        };
+                        info!(
+                            "bot {} {:?} slot={} flow={} stuck={} {}",
+                            p.alias.as_str(),
+                            team,
+                            p.match_slot,
+                            if bot_state.cta_flow_direction.is_some() { "Some" } else { "None" },
+                            bot_state.cta_stuck_ticks,
+                            pos,
+                        );
+                    }
+                }
+            }
         }
 
         let update = server.world.get_player_complete(player_tuple);

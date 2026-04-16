@@ -187,10 +187,14 @@ impl CommandTrait for Spawn {
 
         if let Some(slot_pos) = cta_team_spawn {
             spawn_position = slot_pos;
-            // Tight spawn_radius — since each slot has a distinct
-            // starting position, the retry loop only needs to wiggle
-            // a little to avoid direct collisions.
-            spawn_radius = 30.0;
+            // Wide spawn_radius so the retry loop can find open
+            // water even when the pentagon slot lands on one of the
+            // base's land arms (which happens for ~3 of 5 slots on
+            // the Blue base north-arm). The previous 30 m radius was
+            // too tight — bots on land couldn't find water and
+            // spammed "couldn't spawn" failures. 200 m is well inside
+            // the 250 m base_radius so the visual is still "at base."
+            spawn_radius = 200.0;
         }
 
         let exclusion_zone = if cta_team_spawn.is_some() {
