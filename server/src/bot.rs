@@ -302,18 +302,19 @@ impl Bot {
             // not built, bot on a blocked cell, or stuck-detection
             // suppression).
             //
-            // Always use the full 6.0 weight. The prior
-            // `in_combat ? 1.5 : 6.0` conditional caused bots to
-            // park at enemy-engagement range (200 m springs × 3–5
-            // enemies in midfield outweighed the 1.5 objective
-            // pull) and never push through to the enemy base.
-            // Phase 4 match-1 measured 0/9 bots reaching the enemy
-            // base across a full match as a result. Enemy springs
-            // at weight 1.0 still draw bots toward targets for
-            // shooting — the flow just carries them past the scrum
-            // instead of trapping them inside it. See
-            // plans/bot-objective-commitment.md.
-            let weight = 6.0;
+            // Weight is intentionally lower in combat so the enemy-
+            // engagement spring can still steer the ship toward
+            // nearby targets for shooting. REVERT note: Phase 5
+            // (commit a16daa5) tried `let weight = 6.0;` always,
+            // hypothesizing that in-combat bots were parking at
+            // engagement range because the flow pull was too weak.
+            // Match-1 measurement falsified the theory:
+            // enemy_base_reached stayed at 0 AND terrain_deaths
+            // regressed 12 → 83 (bots charged terrain harder with
+            // nothing to deflect them). Reverted to this
+            // conditional. See plans/bot-objective-commitment.md.
+            let in_combat = closest_enemy.is_some();
+            let weight = if in_combat { 1.5 } else { 6.0 };
             if let Some(flow_dir) = self.cta_flow_direction {
                 movement += flow_dir * weight;
             } else if let Some(target) = self.cta_movement_target {
