@@ -92,6 +92,12 @@ pub struct Mk48Game {
     /// controls overlay flicker off. Once we've seen any touch, we
     /// keep the controls visible for the rest of the session.
     pub touch_ever_seen: bool,
+    /// Ship name labels for the current frame — collected during the
+    /// contact render loop with pre-projected screen coords, drained
+    /// into UiProps on the next update_ui_props tick. Replaces the
+    /// WebGL bitmap-atlas text layer for player names so labels render
+    /// as crisp CSS text (system font) instead of pixellated sprites.
+    pub ship_labels: Vec<crate::ui::ShipLabel>,
 }
 
 type FullLayer = ShadowLayer<Mk48Layer>;
@@ -225,6 +231,7 @@ impl GameClient for Mk48Game {
             ui_state: UiState::default(),
             last_spawn_entity: None,
             touch_ever_seen: false,
+            ship_labels: Vec::new(),
         })
     }
 
@@ -601,6 +608,9 @@ impl GameClient for Mk48Game {
         // Set camera before update layers so they don't get last frame's camera.
         // TODO decouple update and render.
         self.camera.update(camera, zoom, renderer.canvas_size());
+        // Reset per-frame label buffer. Populated during the contact
+        // render loop below, drained into UiProps in update_ui_props.
+        self.ship_labels.clear();
         let weather = Weather::new(renderer.time);
 
         let (visual_range, visual_restriction, area) =
@@ -1300,23 +1310,34 @@ impl GameClient for Mk48Game {
                             format!("{}", contact.player_id().unwrap().0.get())
                         };
 
+                        // HTML overlay label (not WebGL text). Project the
+                        // ship's world position to logical pixels, push
+                        // into self.ship_labels. update_ui_props drains
+                        // this into UiProps.ship_labels, and mk48_ui
+                        // renders each entry as an absolutely-positioned
+                        // div using Menlo — crisp at any zoom, no
+                        // pixellated bitmap-atlas stretch.
+                        //
+                        // Y is flipped manually: Camera2d::to_client_position
+                        // uses the WebGL view-space convention (+Y up)
+                        // but CSS positioning has +Y down. Without the
+                        // flip, labels for ships near the top of the
+                        // viewport land at the BOTTOM of the screen.
+                        let label_world = contact.transform().position
+                            + Vec2::new(0.0, overlay_vertical_position);
+                        let label_px = self.camera.to_client_position(label_world);
+                        let dpr = web_sys::window()
+                            .map(|w| w.device_pixel_ratio() as f32)
+                            .unwrap_or(1.0);
+                        let viewport_css_y =
+                            (self.camera.viewport.y as f32 / dpr) as i32;
                         let c = color_bytes;
-                        layer.text.draw(
-                            &text,
-                            contact.transform().position
-                                + Vec2::new(0.0, overlay_vertical_position + 0.035 * zoom),
-                            0.035 * zoom,
-                            [c[0], c[1], c[2], 255],
-                            TextStyle::italic_if(
-                                false
-                                    && context
-                                        .state
-                                        .core
-                                        .player_or_bot(contact.player_id().unwrap())
-                                        .map(|p| p.authentic)
-                                        .unwrap_or(false),
-                            ),
-                        );
+                        self.ship_labels.push(crate::ui::ShipLabel {
+                            x: label_px.x,
+                            y: viewport_css_y - label_px.y,
+                            alias: text,
+                            color: [c[0], c[1], c[2]],
+                        });
                     }
                     EntityKind::Weapon | EntityKind::Decoy | EntityKind::Aircraft => {
                         let triangle_position = contact.transform().position

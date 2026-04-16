@@ -38,13 +38,21 @@ pub struct ArenaLayout {
 
 impl ArenaLayout {
     pub const DEFAULT: Self = Self {
-        blue_base: Vec2::new(0.0, 500.0),
-        red_base: Vec2::new(0.0, -500.0),
+        // 2× base distance (±500 → ±1000). Gives ships 2000 m of
+        // open water to traverse and turn in — the Phase 3b
+        // steering-layer gate failed at the old 1000 m distance
+        // because terrain density × ship turn radius packed too
+        // tight at that scale. See
+        // plans/cta-arena-expand-and-sparsen.md.
+        blue_base: Vec2::new(0.0, 1000.0),
+        red_base: Vec2::new(0.0, -1000.0),
         base_radius: 250.0,
-        // Bumped from 1200 → 1500 (25% more arena per user request).
-        // Bases stay at ±500 so capture-push distance is unchanged;
-        // the extra space lives on the flanks and beyond the bases.
-        arena_radius: 1500.0,
+        // 1500 → 3000 to match the expanded base distance. Formula
+        // that motivated 3000: base offset 1000 + ~1000 roam room
+        // north/south of bases + ~1000 buffer. Existing CTA tick
+        // enforcement at server.rs:906 clamps world.radius to this
+        // value every tick while any CTA player is present.
+        arena_radius: 3000.0,
     };
 }
 

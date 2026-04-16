@@ -71,3 +71,45 @@
 **Alternatives considered:** Buying game-ready models ($15-50 each), AI generation (Meshy.ai), commissioning artists.
 
 **Consequences:** No 3D model work needed. Sprite-based rendering is simpler and performs well on iPad.
+
+## 2026-04-15: CTA bot AI overhaul — flow fields, steering, arena expand, state machine
+
+**Context:** CTA bots consistently beached themselves on terrain, drove in circles near bases, and never reached the enemy base. Five iterations of tuning the Reynolds-boids force aggregation (weights, springs, look-ahead) each failed a specific gate but revealed a new failure mode. The pattern was architectural, not a bug in any one constant.
+
+**Decision:** Shipped a five-layer rebuild of the bot AI and arena layout on the `flow-field-pathfinding` branch:
+
+1. **Flow-field pathfinding** (`server/src/bot_pathfinder.rs`): Dijkstra-from-goal integration field + per-cell flow vectors, built once per CTA match start. Replaces the per-tick direct-vector pull toward the enemy base. Routes around terrain automatically. `INFLATION_CELLS = 2` and a two-zone goal-clear (force-open 3-cell inner + undo-inflation 14-cell outer) guarantee reachability near the bases.
+
+2. **Non-holonomic steering layer** (Phase 3b, `server/src/bot.rs` outer update): 4-sample forward trace along the ship's projected arc, turn-budget throttle that scales velocity to what the ship's turn rate can execute in the look-ahead window. Prevents bots from committing full-speed headings they can't physically steer.
+
+3. **Arena expand + terrain sparsen** (Phase 4, `server/src/cta_terrain.rs`, `match_state.rs`): base distance doubled from 1000 m → 2000 m (bases at 0, ±1000); arena radius 1500 → 3000 m; 70% of blocking land inside the base-to-base corridor flattened at match start via a MurmurHash3 scatter. Deliberately preserves 30% of islands for visual texture — avoids repeating the reverted "flat blue disk" of commit ae1026a.
+
+4. **State machine + Pure Pursuit path follower** (Phase 6, `server/src/bot_behavior.rs`, new ~700 LOC module): replaces per-tick `movement = Σ forces` with a 4-state FSM (`Spawning`, `Transiting { committing }`, `Engaging`, `Defending`) + `trace_path` multi-waypoint path + velocity-adaptive carrot. Asymmetric hysteresis on every transition (40-tick Engaging hold-out, 10s/3s Defending thresholds, top-3-closest defender rule with team-size <3 short-circuit). Replaces Reynolds 1987 boids with 2006-era goal-directed-agent AI.
+
+5. **Mixed-team rushers + fog-off + spawn retry**:
+   - `prefers_rush: bool` on Bot (~35% true) gives a fraction of bots rusher priority: when within 700 m of the enemy base, Engaging is bypassed and Committing mode is forced. Other ~65% engage in midfield combat as before. Produces naturally mixed team behavior.
+   - CTA fog-of-war removed for the HUMAN player only (`world_outbound.rs`). Early version accidentally applied to bots too, giving them unlimited-range `closest_enemy` and causing out-of-weapon-range fire. Gated to `is_human` after measurement.
+   - Client-side spawn retry (`client/src/ui/game_ui.rs`): re-emits the Spawn command every 2 s if `UiStatus::Spawning` persists while the ship-picker is showing. Handles the server's silent spawn failures (slot clipping bot / sparsen island) without server-side protocol changes.
+
+**Alternatives considered and rejected:**
+
+- *Tuning one more constant* — the Phase 5 objective-weight bump (`in_combat ? 1.5 : 6.0` → `6.0`) was shipped and measured: `terrain_deaths` regressed 12 → 83, `enemy_base_reached` stayed 0. Reverted. Established the rule: when a plan's hard-stop criterion fails, we stop and restructure.
+- *Per-ship-class flow fields* — one flow field per level × per goal = 20 fields, dismissed as memory-for-complexity trade that didn't buy commensurate fidelity at ship scale.
+- *Completely flat arena* — reverted earlier (commit `b32bed0`) for producing a visually barren blue circle. The 70/30 sparsen is the compromise.
+- *Hand-scripted island geometry* — deferred. If the 70/30 sparsen proves insufficient we'd try this before giving up, but the current measurement (terrain_deaths=4 in live test) suggests it's not needed.
+- *Client-side spawn retry alternative: server SpawnFailed wire message* — would require protocol changes into the mk48 descent, invasive. Client retry handles every flavor of server spawn failure including ones we haven't identified.
+
+**Consequences:**
+
+- Bot behavior is measurably better: terrain_deaths dropped from 376 (original failure match) to 4-10 per match depending on configuration. Throttle-rate dropped from 80% to 4-7%. State transitions stay at 46-137 per match (expected 50-150, gate 200 — healthy, no flap).
+- The primary `enemy_base_reached ≥ 3/team` gate never passed in measurement, but bots visibly reach the base vicinity (observed at y ≈ enemy base ± 350 m). The 250 m capture-ring threshold is strict; bots engage enemies outside the ring rather than rushing blind. Rushers partially address this.
+- New runtime counters on `World` and `Server` (all `#[cfg(debug_assertions)]`): `cta_bot_terrain_deaths`, `cta_bots_enemy_base_reached`, `cta_bot_ticks_throttled`, `cta_bot_alive_ticks`, `cta_bot_state_transitions`. Logged on `MatchEvent::MatchEnded`.
+- The 400+ LOC state-machine module is now the primary bot-decision code path; the old boids aggregation remains ONLY as the Free Roam branch in `bot.rs` (CTA is explicitly the state-machine path).
+- `decisions.md` and `plans/` directory gained multiple plan artifacts documenting each phase's theory, acceptance gate, and (for Phase 5) its measured falsification. The plans are intentionally left in-tree as history, not deleted after shipping.
+- Score parity: Blue vs Red CTA matches with human + rushers ran balanced (110/90, 110/70, 170/150 final-UI scores). Before this work, bots would respawn and re-die near spawn without ever pushing — matches were lopsided or stalemated.
+
+**What's left open:**
+
+- `enemy_base_reached` strict gate failure — noted, not tuned further. Could be addressed by loosening threshold to 400 m or by changing the game (shorter base distance, different objective) but both are separate decisions.
+- Client/server match-end score discrepancy: server logs score at `MatchEnded` event fire; client UI keeps incrementing for late kills that land after the event. Noted, not fixed — cosmetic.
+- Human visibility of bots is working. The inverse (if we ever add network multiplayer) — making humans visible to other humans — is untouched.

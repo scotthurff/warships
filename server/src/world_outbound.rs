@@ -115,16 +115,29 @@ impl World {
         // Remember the player's CTA team (Copy'd) so the closure below
         // can decide whether "friendly" means "always visible".
         let player_match_team = player.match_team;
-        // In Capture the Area the player should always see their
-        // teammates on the main map, regardless of visual range. Bump
-        // max_range to cover the full 1500-radius arena (max diagonal
-        // ≈ 3000 units between two ships at opposite edges) so the
-        // iter_radius below includes every boat in the arena. Free
-        // Roam keeps the sensor-based range so distant enemies aren't
-        // free-revealed.
+        // CTA fog-off applies ONLY to human players — bots fall back
+        // to their normal sensor range. Previously applied to bots
+        // too, which gave them unlimited-range `closest_enemy`
+        // targeting and led to bots firing torpedoes at ships 2-3 km
+        // away well out of weapon range. is_bot() is a property of
+        // the PlayerId itself (bot IDs are distinct from human IDs).
+        let is_human = !player.is_bot();
+        // In Capture the Area the player should see the ENTIRE
+        // arena — every ship, teammate or enemy, always visible.
+        // Reasons: (1) bots see everything anyway via their AI state,
+        // so hiding ships from the human just creates asymmetric
+        // information disadvantage; (2) this is a single-player
+        // kid-friendly game, not a competitive sensor-warfare sim;
+        // (3) spotting the action is fun, hunting invisible enemies
+        // is frustrating. Free Roam keeps sensor-based visibility.
+        //
+        // Arena is now ±3000 units (post arena-expand), so max
+        // diagonal between opposite corners is ~6000. iter_radius
+        // needs to match, or distant ships won't be in the candidate
+        // set regardless of the `known` flag below.
         let base_max_range = camera.visual.max(camera.radar.max(camera.sonar));
         let max_range = if player_match_team.is_some() {
-            base_max_range.max(3500.0)
+            base_max_range.max(6500.0)
         } else {
             base_max_range
         };
@@ -153,11 +166,21 @@ impl World {
                 let same_player =
                     entity.player.is_some() && tuple == &**entity.player.as_ref().unwrap();
                 let friendly = entity.is_friendly_to_player(Some(tuple));
-                // CTA teammates are always "known" (always visible on
-                // the main map, regardless of range). Free Roam keeps
-                // the 800-unit proximity gate for team-member boats
-                // so the mk48 team system behaves as before.
+                // CTA: every BOAT in the arena is "known" (visible
+                // on the main map regardless of sensor range) for
+                // the HUMAN player. Bots do NOT get this revelation
+                // — they fall back to their normal sensor-range
+                // uncertainty logic below, which keeps their
+                // `closest_enemy` truly local (not a ship 3 km away
+                // they can't realistically shoot at).
+                //
+                // Free Roam keeps the prior rule: teammates within
+                // 800 units, enemies via sensors only.
+                let cta_reveal_all_boats = is_human
+                    && player_match_team.is_some()
+                    && data.kind == EntityKind::Boat;
                 let known = same_player
+                    || cta_reveal_all_boats
                     || (friendly
                         && (player_match_team.is_some()
                             || distance_squared < 800f32.powi(2)));

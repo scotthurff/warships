@@ -46,6 +46,49 @@ pub struct Server {
     /// player is in `GameMode::CaptureTheArea`. Players in Free Roam are
     /// unaffected.
     pub match_state: MatchState,
+    /// Flow field pointing toward the Blue base. Sampled by Red
+    /// attackers and Blue defenders. Built once per CTA match start;
+    /// cleared on quit-to-title and reset_to_waiting.
+    pub flow_to_blue: Option<crate::bot_pathfinder::FlowField>,
+    /// Flow field pointing toward the Red base. Sampled by Blue
+    /// attackers and Red defenders.
+    pub flow_to_red: Option<crate::bot_pathfinder::FlowField>,
+    /// Dev-only instrumentation: the set of PlayerIds that have
+    /// visited the 300 m "contested zone" around the arena center
+    /// during the current CTA match. Cleared on match start,
+    /// logged on MatchEnded. Acceptance criterion for the
+    /// pathfinding rollout (≥ 2 teammate + ≥ 2 enemy bots should
+    /// enter the zone within 60 s of match start).
+    #[cfg(debug_assertions)]
+    cta_contested_zone_visitors: std::collections::HashSet<PlayerId>,
+    /// Steering-layer acceptance counters (plans/non-holonomic-ship-
+    /// steering.md). Cleared on match start; logged on MatchEnded.
+    ///
+    /// `cta_bots_enemy_base_reached` — bots that entered within
+    /// 250 m of the ENEMY base while alive. Gate: ≥ 1 bot per team
+    /// per match (confirms end-to-end routing).
+    ///
+    /// `cta_bot_ticks_throttled` + `cta_bot_alive_ticks` — counted
+    /// every outer tick across every alive bot in CTA. Ratio gives
+    /// the throttle rate; gate: ≤ 40% (catches the regression mode
+    /// where bots survive by crawling through open water instead of
+    /// actually turning hard in tight spots).
+    ///
+    /// `World::cta_bot_terrain_deaths` lives on World because it
+    /// needs to increment inside `World::physics` where entity→player
+    /// lookup is available. Server reads it on MatchEnded.
+    #[cfg(debug_assertions)]
+    cta_bots_enemy_base_reached: std::collections::HashSet<PlayerId>,
+    #[cfg(debug_assertions)]
+    cta_bot_ticks_throttled: u32,
+    #[cfg(debug_assertions)]
+    cta_bot_alive_ticks: u32,
+    /// Phase 6 — total state-machine transitions across all bots
+    /// this match. Sanity-check for hysteresis flap: a healthy
+    /// match expects 50-150 transitions; >200 suggests a transition
+    /// threshold is still flap-prone.
+    #[cfg(debug_assertions)]
+    cta_bot_state_transitions: u32,
 }
 
 impl Server {
@@ -103,6 +146,10 @@ impl Server {
         // Reset the FSM. match_id bumps so stale client MatchUpdates
         // are discarded; phase returns to Countdown for the new intro.
         self.match_state.reset();
+
+        // Rebuild flow fields — terrain may have been damaged by
+        // weapons/icebreakers during the previous match.
+        self.build_flow_fields();
 
         info!(
             "match {} countdown starting (post play-again)",
@@ -174,6 +221,11 @@ impl Server {
         //    (tick loop at line ~793 or Spawn handler at line ~537) sees
         //    `phase == Waiting` and runs the fresh-match bootstrap.
         self.match_state.reset_to_waiting();
+
+        // Drop flow fields. They'll be rebuilt when someone enters
+        // CTA again.
+        self.flow_to_blue = None;
+        self.flow_to_red = None;
     }
 
     /// One-time cleanup of pre-existing static entities when a CTA
@@ -213,6 +265,38 @@ impl Server {
                 ),
                 None => break,
             }
+        }
+    }
+
+    /// Sparsen the CTA corridor terrain (once per match start, before
+    /// the flow fields see it) and build both flow fields from the
+    /// sparsened terrain. Called from the tick-loop bootstrap, the
+    /// Spawn-handler bootstrap, and Play Again.
+    ///
+    /// Sub-millisecond per field on a 128×128 grid. The sparsen pass
+    /// adds ~5000 terrain writes and runs in a few ms total, well
+    /// under the 100 ms tick budget. See
+    /// plans/cta-arena-expand-and-sparsen.md.
+    fn build_flow_fields(&mut self) {
+        use crate::bot_pathfinder::FlowField;
+        use crate::cta_terrain::sparsen_cta_corridor;
+        let layout = ArenaLayout::DEFAULT;
+        let t0 = std::time::Instant::now();
+        // Sparsen FIRST so the flow field routes against the final
+        // terrain shape. Doing this after the field is built would
+        // leave the integration values stale.
+        sparsen_cta_corridor(&mut self.world.terrain, &layout);
+        self.flow_to_blue = Some(FlowField::build(&self.world.terrain, layout.blue_base));
+        self.flow_to_red = Some(FlowField::build(&self.world.terrain, layout.red_base));
+        info!("flow fields built in {:?}", t0.elapsed());
+        #[cfg(debug_assertions)]
+        {
+            self.cta_contested_zone_visitors.clear();
+            self.cta_bots_enemy_base_reached.clear();
+            self.cta_bot_ticks_throttled = 0;
+            self.cta_bot_alive_ticks = 0;
+            self.cta_bot_state_transitions = 0;
+            self.world.cta_bot_terrain_deaths = 0;
         }
     }
 
@@ -515,6 +599,18 @@ impl ArenaService for Server {
                 0
             },
             match_state: MatchState::new(),
+            flow_to_blue: None,
+            flow_to_red: None,
+            #[cfg(debug_assertions)]
+            cta_contested_zone_visitors: std::collections::HashSet::new(),
+            #[cfg(debug_assertions)]
+            cta_bots_enemy_base_reached: std::collections::HashSet::new(),
+            #[cfg(debug_assertions)]
+            cta_bot_ticks_throttled: 0,
+            #[cfg(debug_assertions)]
+            cta_bot_alive_ticks: 0,
+            #[cfg(debug_assertions)]
+            cta_bot_state_transitions: 0,
         }
     }
 
@@ -581,6 +677,7 @@ impl ArenaService for Server {
                         self.match_state.start_match();
                         self.assign_match_teams();
                         self.clear_statics();
+                        self.build_flow_fields();
                         info!(
                             "match {} started (via Spawn)",
                             self.match_state.match_id
@@ -840,6 +937,7 @@ impl ArenaService for Server {
                 // oil platforms, HQs) carried over from the prior free-
                 // roam session so the CTA arena starts clean.
                 self.clear_statics();
+                self.build_flow_fields();
                 info!(
                     "match {} started (Capture the Area)",
                     self.match_state.match_id
@@ -872,6 +970,66 @@ impl ArenaService for Server {
                 // Release the player borrow before touching match_state.
                 if let Some(team) = team_to_award {
                     self.match_state.record_kill(team);
+                }
+            }
+
+            // Dev-only: per-bot sampling for acceptance metrics this
+            // tick. Existing contested-zone visitor count (pathfinding
+            // rollout) is joined by steering-layer counters for
+            // plans/non-holonomic-ship-steering.md:
+            //   - alive-ticks baseline (throttle-rate denominator)
+            //   - throttled-ticks numerator (pending_speed_scale < 0.9)
+            //   - enemy-base reach (end-to-end routing check)
+            #[cfg(debug_assertions)]
+            {
+                use crate::match_state::{ArenaLayout, Team};
+                const CONTESTED_RADIUS_SQ: f32 = 300.0 * 300.0;
+                const BASE_REACHED_RADIUS_SQ: f32 = 250.0 * 250.0;
+                for p in self.player.iter_borrow() {
+                    if !p.is_bot() || p.match_team.is_none() {
+                        continue;
+                    }
+                    let team = p.match_team.unwrap();
+                    if let Status::Alive { entity_index, .. } = p.status {
+                        let pos = self.world.entities[entity_index].transform.position;
+
+                        // Contested-zone (existing metric).
+                        if pos.length_squared() < CONTESTED_RADIUS_SQ {
+                            self.cta_contested_zone_visitors.insert(p.player_id);
+                        }
+
+                        // Steering: alive-tick baseline.
+                        self.cta_bot_alive_ticks =
+                            self.cta_bot_alive_ticks.saturating_add(1);
+
+                        // Steering: throttled-tick numerator. Bot
+                        // state lives in kodiak's Player<G>.inner, not
+                        // our TempPlayer — reach across to context's
+                        // player repo to read `pending_speed_scale`.
+                        // Extract the scalar first so the inner bot
+                        // borrow is released before the self mutation.
+                        let is_throttled = context
+                            .players
+                            .get(p.player_id)
+                            .and_then(|kp| kp.inner.bot())
+                            .map(|b| b.pending_speed_scale < 0.9)
+                            .unwrap_or(false);
+                        if is_throttled {
+                            self.cta_bot_ticks_throttled =
+                                self.cta_bot_ticks_throttled.saturating_add(1);
+                        }
+
+                        // Steering: enemy-base reach. Per-team enemy
+                        // base lookup — Blue's enemy is Red's base
+                        // and vice versa.
+                        let enemy_base = match team {
+                            Team::Blue => ArenaLayout::DEFAULT.red_base,
+                            Team::Red => ArenaLayout::DEFAULT.blue_base,
+                        };
+                        if (pos - enemy_base).length_squared() < BASE_REACHED_RADIUS_SQ {
+                            self.cta_bots_enemy_base_reached.insert(p.player_id);
+                        }
+                    }
                 }
             }
 
@@ -908,6 +1066,59 @@ impl ArenaService for Server {
                             "match {} ended: winner={:?} blue={} red={}",
                             self.match_state.match_id, winner, blue_score, red_score
                         );
+                        #[cfg(debug_assertions)]
+                        {
+                            // Pathfinding acceptance metric (see
+                            // plans/cta-bot-pathfinding.md): count unique
+                            // bots that visited the 300 m contested zone.
+                            let n = self.cta_contested_zone_visitors.len();
+                            info!(
+                                "match {}: {} unique bots entered contested zone",
+                                self.match_state.match_id, n
+                            );
+
+                            // Steering-layer + Phase 6 acceptance
+                            // metrics. Pass criteria for Phase 6:
+                            //   1. terrain_deaths ≤ 20
+                            //   2. enemy_base_reached ≥ 3 per team
+                            //   3. throttle_rate ≤ 40% m1, ≤ 25% m3
+                            //   4. state_transitions ≤ 200
+                            let terrain_deaths = self.world.cta_bot_terrain_deaths;
+                            let enemy_base_reached =
+                                self.cta_bots_enemy_base_reached.len();
+                            let throttled = self.cta_bot_ticks_throttled;
+                            let alive = self.cta_bot_alive_ticks;
+                            let throttle_rate_pct = if alive > 0 {
+                                (throttled as f32 / alive as f32) * 100.0
+                            } else {
+                                0.0
+                            };
+                            // Sum state-machine transitions across
+                            // all CTA bots. Per-bot counter is
+                            // monotonic within a life (reset on
+                            // Spawning), so summing gives total
+                            // transitions over the match.
+                            let state_transitions: u32 = context
+                                .players
+                                .iter()
+                                .filter_map(|(_, kp)| {
+                                    kp.inner.bot().map(|b| b.behavior_state.transitions_this_life)
+                                })
+                                .sum();
+                            info!(
+                                "match {}: steering — terrain_deaths={} \
+                                 enemy_base_reached={} \
+                                 throttle_rate={:.1}% ({}/{} ticks) \
+                                 state_transitions={}",
+                                self.match_state.match_id,
+                                terrain_deaths,
+                                enemy_base_reached,
+                                throttle_rate_pct,
+                                throttled,
+                                alive,
+                                state_transitions,
+                            );
+                        }
                     }
                 }
             }
