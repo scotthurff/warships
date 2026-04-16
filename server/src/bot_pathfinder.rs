@@ -254,6 +254,59 @@ impl FlowField {
     }
 }
 
+/// Walk the flow field from `start` toward `goal`, producing a
+/// list of world-space waypoints. Used by `bot_behavior` for Pure
+/// Pursuit path following — see plans/bot-state-machine-and-path-
+/// following.md.
+///
+/// Returns a path that begins at `start` and ends either at `goal`
+/// (if reached within step range) or at the last reachable point
+/// before the flow field ran out. Truncated silently if the goal
+/// is unreachable.
+///
+/// `step_m` should be smaller than typical corridor widths (for
+/// the sparsened CTA arena, corridor half-width is 700 m; step of
+/// 80 m is comfortably under that). `max_waypoints` caps the path
+/// length — at step=80 m and max=25, the path covers up to 2000 m.
+///
+/// Per-waypoint terrain check with one retry: if the straight
+/// extrapolation from `dir * step_m` lands on land (surviving
+/// sparsen islands, base arms), shrink the step to half and try
+/// again. If still land, bail — the flow field should not have
+/// produced a direction pointing into land, but defending against
+/// it keeps this robust against edge cases.
+pub fn trace_path(
+    flow: &FlowField,
+    terrain: &Terrain,
+    start: Vec2,
+    goal: Vec2,
+    step_m: f32,
+    max_waypoints: usize,
+) -> Vec<Vec2> {
+    let mut path = Vec::with_capacity(max_waypoints + 2);
+    path.push(start);
+    let mut p = start;
+    for _ in 0..max_waypoints {
+        let Some(dir) = flow.sample(p) else { break };
+        let next = p + dir * step_m;
+        if terrain.sample(next).unwrap_or(Altitude::MIN) >= SAND_LEVEL {
+            let retry = p + dir * (step_m * 0.5);
+            if terrain.sample(retry).unwrap_or(Altitude::MIN) >= SAND_LEVEL {
+                break;
+            }
+            p = retry;
+        } else {
+            p = next;
+        }
+        path.push(p);
+        if (p - goal).length() < step_m {
+            path.push(goal);
+            break;
+        }
+    }
+    path
+}
+
 // ─── Internals ────────────────────────────────────────────────────
 
 const NEIGHBOR_OFFSETS_I8: [(i8, i8); 8] = [

@@ -66,6 +66,13 @@ pub struct Bot {
     /// across the kodiak Player<G>.inner.bot() path to count
     /// throttled ticks.
     pub pending_speed_scale: f32,
+    /// Phase 6 — state machine + path follower. See
+    /// plans/bot-state-machine-and-path-following.md and
+    /// server/src/bot_behavior.rs. Updated every tick by both the
+    /// outer update (path planning on state entry) and the inner
+    /// update (state transitions + carrot steering). `pub` so the
+    /// outer update in server.rs can plan paths.
+    pub behavior_state: crate::bot_behavior::BehaviorState,
 }
 
 impl Default for Bot {
@@ -107,6 +114,7 @@ impl Default for Bot {
             cta_flow_direction: None,
             cta_stuck_ticks: 0,
             pending_speed_scale: 1.0,
+            behavior_state: crate::bot_behavior::BehaviorState::default(),
         }
     }
 }
@@ -147,183 +155,164 @@ impl Bot {
             let data: &EntityData = boat_type.data();
             let health_percent = 1.0 - boat.damage().to_secs() / data.max_health().to_secs();
 
-            // Weighted sums of direction vectors for various purposes.
-            let mut movement = Vec2::ZERO;
-
-            let attract = |weighted_sum: &mut Vec2, target_delta: Vec2, distance_squared: f32| {
-                *weighted_sum += target_delta / (1.0 + distance_squared);
-            };
-
-            let repel = |weighted_sum: &mut Vec2, target_delta: Vec2, distance_squared: f32| {
-                attract(weighted_sum, -target_delta, distance_squared);
-            };
-
-            // Spring force, weighted. `weight` lets callers scale
-            // the contribution — essential for friendly boats,
-            // where a 5-ship pentagon would otherwise sum 4 springs
-            // into a ~5-magnitude cohesion/separation force and
-            // drown out the objective pull entirely.
-            let spring = |weighted_sum: &mut Vec2,
-                          target_delta: Vec2,
-                          desired_distance: f32,
-                          weight: f32| {
-                let distance = target_delta.length();
-                let displacement = distance - desired_distance;
-                *weighted_sum +=
-                    target_delta * displacement / (displacement.powi(2) + 1.0) * weight;
-            };
-
-            // Terrain avoidance — short-range safety net only. Since
-            // waypoint routing (see next_attack_waypoint_stateful)
-            // handles global navigation around land, this ring is
-            // back to a conservative close-range repel for momentum
-            // overshoots and arena-edge avoidance. Pre-waypoint
-            // tuning (LOOK_AHEAD=2.0, strong repel, forward_block
-            // dampen) conflicted with waypoints: a single 540 m-out
-            // probe hitting the coast would cancel half the
-            // objective pull and leave bots drifting off-route.
-            const SAMPLES: u32 = 10;
-            for i in 0..SAMPLES {
-                let angle =
-                    Angle::from_radians(i as f32 * (2.0 * std::f32::consts::PI / SAMPLES as f32));
-                let delta_position = angle.to_vec() * data.length;
-                if Self::is_land_or_border(
-                    boat.transform().position + delta_position,
-                    terrain,
-                    update.world_radius(),
-                ) {
-                    repel(&mut movement, delta_position, 0.5 * data.length.powi(2));
-                }
-            }
-
+            // Phase 6: scan contacts once to find closest enemy (for
+            // aim/firing decisions below) and closest incoming
+            // torpedo (for the dodge check inside bot_behavior::tick).
+            // The old per-tick movement-vector aggregation (Reynolds
+            // boids, ~170 lines) has been replaced by the state
+            // machine + Pure Pursuit path follower in bot_behavior.
+            // See plans/bot-state-machine-and-path-following.md.
             let mut closest_enemy: Option<(U::Contact, f32)> = None;
+            let mut closest_enemy_pos: Option<Vec2> = None;
+            let mut incoming_torpedo: Option<crate::bot_behavior::TorpedoThreat> = None;
+            let ship_pos = boat.transform().position;
+            let ship_heading_vec = boat.transform().direction.to_vec();
+            let ship_speed = boat.transform().velocity.to_mps();
+            let ship_len_sq = data.length.powi(2);
 
-            // Scan sensor contacts to help make decisions.
             for contact in contacts {
                 if contact.id() == boat.id() {
-                    // Skip processing self.
                     continue;
                 }
+                let Some(contact_data) = contact.entity_type().map(EntityType::data) else {
+                    continue;
+                };
+                let delta_position = contact.transform().position - ship_pos;
+                let distance_squared = delta_position.length_squared();
 
-                if let Some(contact_data) = contact.entity_type().map(EntityType::data) {
-                    let delta_position = contact.transform().position - boat.transform().position;
-                    let distance_squared = delta_position.length_squared();
+                let same_self = contact.player_id() == Some(player_id);
+                let on_my_team = contact
+                    .player_id()
+                    .map(|pid| self.cta_teammate_ids.contains(&pid))
+                    .unwrap_or(false);
+                let friendly = same_self || on_my_team;
 
-                    // CTA-aware friendly check: a contact is friendly if
-                    // it's our own ship OR its player is in our cta
-                    // teammate set. Bots that share a match_team end up
-                    // in the teammate set so they stop trying to
-                    // torpedo each other.
-                    let same_self = contact.player_id() == Some(player_id);
-                    let on_my_team = contact
-                        .player_id()
-                        .map(|pid| self.cta_teammate_ids.contains(&pid))
-                        .unwrap_or(false);
-                    let friendly = same_self || on_my_team;
-
-                    if contact_data.kind == EntityKind::Collectible {
-                        attract(&mut movement, delta_position, distance_squared);
-                    } else if !friendly && contact_data.kind == EntityKind::Boat {
-                        // Enemy boat. Rams charge in headlong (no
-                        // engagement spring); everyone else uses a
-                        // spring at engagement range so the bot
-                        // approaches when far and orbits when close
-                        // — replacing the old "always repel" which
-                        // made bots flee from enemies.
-                        if data.sub_kind != EntitySubKind::Ram {
-                            let engagement =
-                                ((data.length + contact_data.length) * 1.5).max(200.0);
-                            spring(&mut movement, delta_position, engagement, 1.0);
-                        }
-                    } else if !friendly
-                        && !(contact_data.kind == EntityKind::Boat
-                            && data.sub_kind == EntitySubKind::Ram)
-                    {
-                        // Enemy non-boat (weapons, aircraft) OR enemy
-                        // boat (unless we're a ram charging in) —
-                        // repel to dodge projectiles or avoid
-                        // collisions. Friendly boats skip this branch
-                        // entirely; their separation is handled by
-                        // the weighted spring below.
-                        repel(&mut movement, delta_position, distance_squared);
-                    }
-
-                    if friendly {
-                        if contact_data.kind == EntityKind::Boat {
-                            // Weight 0.2 so 4 teammates sum to ~1.0
-                            // of separation force instead of ~5.2
-                            // (which was drowning out the 2.5
-                            // objective pull and leaving bots
-                            // orbiting each other forever instead
-                            // of attacking the enemy base).
-                            spring(
-                                &mut movement,
-                                delta_position,
-                                data.radius + contact_data.radius,
-                                0.2,
-                            );
-                        }
-                    } else if match contact_data.kind {
-                        // Engage enemies aggressively. CTA teammate
-                        // detection above already filters out friendlies,
-                        // so anything reaching this branch is an enemy
-                        // worth shooting at.
-                        EntityKind::Boat => true,
-                        EntityKind::Aircraft => true,
-                        EntityKind::Weapon => matches!(
-                            contact_data.sub_kind,
-                            EntitySubKind::Missile | EntitySubKind::Torpedo
-                        ),
-                        EntityKind::Obstacle => {
-                            repel(
-                                &mut movement,
-                                delta_position,
-                                (distance_squared - contact_data.radius.powi(2)).max(0.0),
-                            );
-                            false
-                        }
-                        _ => false,
-                    } {
-                        if let Some(existing) = &closest_enemy {
-                            if distance_squared < existing.1 {
+                if !friendly {
+                    match contact_data.kind {
+                        EntityKind::Boat | EntityKind::Aircraft => {
+                            let update_closest = match &closest_enemy {
+                                Some((_, d)) => distance_squared < *d,
+                                None => true,
+                            };
+                            if update_closest {
+                                closest_enemy_pos = Some(contact.transform().position);
                                 closest_enemy = Some((contact, distance_squared));
                             }
-                        } else {
-                            closest_enemy = Some((contact, distance_squared));
                         }
+                        EntityKind::Weapon
+                            if matches!(
+                                contact_data.sub_kind,
+                                EntitySubKind::Torpedo | EntitySubKind::Missile
+                            ) =>
+                        {
+                            // Torpedo/missile threat check: within
+                            // 1.5 ship-lengths AND on a collision
+                            // heading (dot product of weapon velocity
+                            // vs ship-relative position < -0.5, i.e.
+                            // heading generally toward us).
+                            let within = distance_squared
+                                < (1.5 * data.length).powi(2).max(ship_len_sq * 2.25);
+                            let weapon_vel = contact.transform().direction.to_vec();
+                            let incoming = weapon_vel.dot(delta_position)
+                                < -0.5 * delta_position.length().max(1.0);
+                            if within && incoming && incoming_torpedo.is_none() {
+                                incoming_torpedo =
+                                    Some(crate::bot_behavior::TorpedoThreat {
+                                        id: contact.id().get().into(),
+                                        relative_pos: delta_position,
+                                    });
+                            }
+                            // Also track as "closest enemy" so the
+                            // Engaging transition fires on incoming
+                            // fire (bot considers itself under attack).
+                            if closest_enemy.is_none() {
+                                closest_enemy_pos = Some(contact.transform().position);
+                                closest_enemy = Some((contact, distance_squared));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
 
-            // Push the objective. Prefer the flow-field direction
-            // (terrain-aware routing around islands and the arena
-            // edge) when available, falling through to the direct-
-            // to-target unit vector as a last resort (flow field
-            // not built, bot on a blocked cell, or stuck-detection
-            // suppression).
+            // Delegate movement decision. Two branches:
             //
-            // Weight is intentionally lower in combat so the enemy-
-            // engagement spring can still steer the ship toward
-            // nearby targets for shooting. REVERT note: Phase 5
-            // (commit a16daa5) tried `let weight = 6.0;` always,
-            // hypothesizing that in-combat bots were parking at
-            // engagement range because the flow pull was too weak.
-            // Match-1 measurement falsified the theory:
-            // enemy_base_reached stayed at 0 AND terrain_deaths
-            // regressed 12 → 83 (bots charged terrain harder with
-            // nothing to deflect them). Reverted to this
-            // conditional. See plans/bot-objective-commitment.md.
-            let in_combat = closest_enemy.is_some();
-            let weight = if in_combat { 1.5 } else { 6.0 };
-            if let Some(flow_dir) = self.cta_flow_direction {
-                movement += flow_dir * weight;
-            } else if let Some(target) = self.cta_movement_target {
-                let to_target = target - boat.transform().position;
-                let dist = to_target.length();
-                if dist > 50.0 {
-                    movement += (to_target / dist) * weight;
+            // (a) CTA bot — outer update has populated
+            //     `behavior_state.pending_outer`. Run the Phase 6
+            //     state machine + Pure Pursuit path follower.
+            //
+            // (b) Free Roam bot — `pending_outer` is None. Keep the
+            //     existing Reynolds-style force aggregation, scoped
+            //     to this branch. The state machine is explicitly
+            //     CTA-only; Free Roam works fine with boids (it has
+            //     no objective to commit to, no defense to hystere-
+            //     size, no enemy-base to reach — all the failure
+            //     modes the state machine fixes are CTA-specific).
+            let behavior_output = if let Some(outer) = self.behavior_state.pending_outer.clone() {
+                let behavior_inputs = crate::bot_behavior::BehaviorInputs {
+                    ship_pos,
+                    ship_heading: ship_heading_vec,
+                    ship_speed,
+                    ship_length: data.length,
+                    closest_enemy: closest_enemy_pos,
+                    incoming_torpedo,
+                    own_base: outer.own_base,
+                    enemy_base: outer.enemy_base,
+                    own_base_capture_ms: outer.own_base_capture_ms,
+                    is_top_3_defender: outer.is_top_3_defender,
+                    terrain,
+                    world_radius: update.world_radius(),
+                };
+                crate::bot_behavior::tick(&mut self.behavior_state, &behavior_inputs)
+            } else {
+                // Free Roam: old force-aggregation behavior. Keep
+                // enemies-spring-in-plus-terrain-repel logic but
+                // simplified since we already scanned contacts
+                // above for closest_enemy.
+                let mut movement = Vec2::ZERO;
+                // Terrain close-range repel (8-sample ring).
+                for i in 0..8 {
+                    let angle = Angle::from_radians(
+                        i as f32 * (std::f32::consts::PI * 2.0 / 8.0),
+                    );
+                    let delta = angle.to_vec() * data.length;
+                    if Self::is_land_or_border(
+                        ship_pos + delta,
+                        terrain,
+                        update.world_radius(),
+                    ) {
+                        let d_sq = delta.length_squared().max(1.0);
+                        movement -= delta / (1.0 + d_sq * 0.5);
+                    }
                 }
-            }
+                // Enemy spring at engagement range (for attackers;
+                // rams skip).
+                if let Some((enemy, _)) = &closest_enemy {
+                    if data.sub_kind != EntitySubKind::Ram {
+                        if let Some(enemy_data) = enemy.entity_type().map(EntityType::data) {
+                            let delta = enemy.transform().position - ship_pos;
+                            let engagement =
+                                ((data.length + enemy_data.length) * 1.5).max(200.0);
+                            let dist = delta.length();
+                            let displacement = dist - engagement;
+                            movement +=
+                                delta * displacement / (displacement.powi(2) + 1.0);
+                        }
+                    }
+                }
+                // Enemy torpedo/missile dodge.
+                if let Some(t) = &incoming_torpedo {
+                    movement -= t.relative_pos.normalize_or_zero() * 10.0;
+                }
+                // Small forward bias so stationary bots don't idle.
+                movement += ship_heading_vec * 0.5;
+
+                crate::bot_behavior::BehaviorOutput {
+                    direction_target: Angle::from(movement) + self.steer_bias,
+                    velocity_scale: 1.0,
+                    bypass_phase3b_throttle: false,
+                }
+            };
 
             let mut best_firing_solution = None;
 
@@ -446,20 +435,25 @@ impl Bot {
                 false
             };
 
+            // Compose speed scale:
+            //  - CTA + Committing: bypass Phase 3b throttle (push).
+            //  - Otherwise: min(behavior, phase3b) — tighter wins.
+            let composed_speed_scale = if behavior_output.bypass_phase3b_throttle {
+                behavior_output.velocity_scale
+            } else {
+                behavior_output.velocity_scale.min(self.pending_speed_scale)
+            };
+
             let mut ret = Command::Control(Control {
                 guidance: Some(Guidance {
-                    direction_target: Angle::from(movement) + self.steer_bias,
-                    // Bumped from (0.65 / 0.80 / 0.90) — old values
-                    // made bots feel sluggish. With CTA's tighter
-                    // arena, faster bots actually push the objective.
-                    //
-                    // Multiplied by `pending_speed_scale` to apply
-                    // the non-holonomic turn-budget throttle computed
-                    // in the previous outer update. Defaults to 1.0
-                    // for non-CTA bots and when the trace finds no
-                    // required turn, so this is a no-op outside CTA
-                    // or in open water.
-                    velocity_target: data.speed * self.pending_speed_scale * match common::Difficulty::get_global() {
+                    // Phase 6: direction comes from the state machine
+                    // (CTA) or the Free Roam force aggregation.
+                    // `steer_bias` is already applied inside the Free
+                    // Roam branch but not the CTA branch — CTA bots
+                    // should track the carrot cleanly without random
+                    // wiggle.
+                    direction_target: behavior_output.direction_target,
+                    velocity_target: data.speed * composed_speed_scale * match common::Difficulty::get_global() {
                         common::Difficulty::Captain => 0.80,
                         common::Difficulty::Admiral => 0.88,
                         common::Difficulty::FleetCommander => 0.95,
@@ -563,6 +557,15 @@ impl kodiak_server::Bot<Server> for Bot {
                 /// needed.
                 speed_scale: f32,
                 stuck_ticks_delta: StuckDelta,
+                /// Phase 6: team-context inputs for the state machine.
+                /// Some = CTA bot; None = Free Roam.
+                outer_context: Option<crate::bot_behavior::PendingOuterInputs>,
+                /// Phase 6: freshly-planned path for the current
+                /// target, or None if no plan could be made (no flow
+                /// field, not alive, etc.). The inner update's state
+                /// machine reads this via `bot_state.behavior_state.path`.
+                planned_path: Option<Vec<Vec2>>,
+                planned_path_target: Option<Vec2>,
             }
             enum StuckDelta {
                 Keep,      // not in CTA or not tracking
@@ -576,6 +579,9 @@ impl kodiak_server::Bot<Server> for Bot {
                     flow_direction: None,
                     speed_scale: 1.0,
                     stuck_ticks_delta: StuckDelta::Reset,
+                    outer_context: None,
+                    planned_path: None,
+                    planned_path_target: None,
                 },
                 Some(team) => {
                     use crate::match_state::ArenaLayout;
@@ -775,11 +781,71 @@ impl kodiak_server::Bot<Server> for Bot {
                         Some(_) => StuckDelta::Reset,
                     };
 
+                    // Phase 6 — team-context inputs for the state
+                    // machine. Compute is_top_3_defender by ranking
+                    // teammates by distance to own_base. Short-
+                    // circuit: if <3 teammates alive, every surviving
+                    // teammate defends.
+                    let is_top_3_defender = {
+                        let mut teammate_dists: Vec<f32> = Vec::new();
+                        let mut my_dist: f32 = f32::INFINITY;
+                        if let Some((my_pos, _, _, _)) = alive_state {
+                            my_dist = (my_pos - own_base).length();
+                            teammate_dists.push(my_dist);
+                            for mate_id in &teammate_ids {
+                                if let Some(mate_tuple) = server.player.get(*mate_id) {
+                                    let mate_p = mate_tuple.borrow_player();
+                                    if let Status::Alive { entity_index, .. } = mate_p.status {
+                                        let e = &server.world.entities[entity_index];
+                                        teammate_dists.push((e.transform.position - own_base).length());
+                                    }
+                                }
+                            }
+                        }
+                        // Team size <3 → short-circuit to "any alive defender".
+                        if teammate_dists.len() < 3 {
+                            alive_state.is_some()
+                        } else {
+                            teammate_dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                            my_dist <= teammate_dists[2] + 0.01
+                        }
+                    };
+
+                    let outer_context = Some(crate::bot_behavior::PendingOuterInputs {
+                        own_base,
+                        enemy_base,
+                        own_base_capture_ms: defense_progress_ms,
+                        is_top_3_defender,
+                    });
+
+                    // Plan a path toward the current target (own base
+                    // if defending, else enemy base). Replans every
+                    // tick — cheap (25 flow samples + 25 terrain
+                    // samples). Keeps the bot's path fresh against
+                    // any mid-match terrain destruction.
+                    let (planned_path, planned_path_target) =
+                        if let (Some(f), Some((pos, _, _, _))) = (field, alive_state) {
+                            let path = crate::bot_pathfinder::trace_path(
+                                f,
+                                &server.world.terrain,
+                                pos,
+                                target,
+                                80.0,
+                                25,
+                            );
+                            (Some(path), Some(target))
+                        } else {
+                            (None, None)
+                        };
+
                     TargetInputs {
                         movement_target: Some(target),
                         flow_direction,
                         speed_scale,
                         stuck_ticks_delta,
+                        outer_context,
+                        planned_path,
+                        planned_path_target,
                     }
                 }
             };
@@ -788,6 +854,29 @@ impl kodiak_server::Bot<Server> for Bot {
             bot_state.cta_teammate_ids = teammate_ids;
             bot_state.cta_movement_target = inputs.movement_target;
             bot_state.pending_speed_scale = inputs.speed_scale;
+            // Phase 6: write team-context + freshly-planned path
+            // into the behavior state for the inner update's state
+            // machine to consume.
+            bot_state.behavior_state.pending_outer = inputs.outer_context.clone();
+            if let (Some(path), Some(target)) =
+                (inputs.planned_path, inputs.planned_path_target)
+            {
+                bot_state.behavior_state.path = path;
+                bot_state.behavior_state.path_target = target;
+            } else if inputs.outer_context.is_some() {
+                // CTA bot that's currently dead (no flow field
+                // sample available). Reset state to Spawning so
+                // that on respawn the state machine starts fresh
+                // — otherwise a dead bot holds whatever state it
+                // had before death and fires a spurious transition
+                // on revival.
+                bot_state.behavior_state.state = crate::bot_behavior::State::Spawning;
+                bot_state.behavior_state.path.clear();
+                bot_state.behavior_state.ticks_enemy_out = 0;
+                bot_state.behavior_state.ticks_engage_pending = 0;
+                bot_state.behavior_state.ticks_defense_exit = 0;
+                bot_state.behavior_state.ticks_defend_pending = 0;
+            }
 
             // Apply stuck-detection state transition.
             match inputs.stuck_ticks_delta {

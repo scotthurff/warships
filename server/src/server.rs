@@ -83,6 +83,12 @@ pub struct Server {
     cta_bot_ticks_throttled: u32,
     #[cfg(debug_assertions)]
     cta_bot_alive_ticks: u32,
+    /// Phase 6 — total state-machine transitions across all bots
+    /// this match. Sanity-check for hysteresis flap: a healthy
+    /// match expects 50-150 transitions; >200 suggests a transition
+    /// threshold is still flap-prone.
+    #[cfg(debug_assertions)]
+    cta_bot_state_transitions: u32,
 }
 
 impl Server {
@@ -289,6 +295,7 @@ impl Server {
             self.cta_bots_enemy_base_reached.clear();
             self.cta_bot_ticks_throttled = 0;
             self.cta_bot_alive_ticks = 0;
+            self.cta_bot_state_transitions = 0;
             self.world.cta_bot_terrain_deaths = 0;
         }
     }
@@ -602,6 +609,8 @@ impl ArenaService for Server {
             cta_bot_ticks_throttled: 0,
             #[cfg(debug_assertions)]
             cta_bot_alive_ticks: 0,
+            #[cfg(debug_assertions)]
+            cta_bot_state_transitions: 0,
         }
     }
 
@@ -1068,12 +1077,12 @@ impl ArenaService for Server {
                                 self.match_state.match_id, n
                             );
 
-                            // Steering-layer acceptance metrics (see
-                            // plans/non-holonomic-ship-steering.md).
-                            // Pass criteria across 3 consecutive matches:
-                            //   1. terrain_deaths ≤ 2
-                            //   2. enemy_base_reached ≥ 1
-                            //   3. throttle_rate ≤ 40%
+                            // Steering-layer + Phase 6 acceptance
+                            // metrics. Pass criteria for Phase 6:
+                            //   1. terrain_deaths ≤ 20
+                            //   2. enemy_base_reached ≥ 3 per team
+                            //   3. throttle_rate ≤ 40% m1, ≤ 25% m3
+                            //   4. state_transitions ≤ 200
                             let terrain_deaths = self.world.cta_bot_terrain_deaths;
                             let enemy_base_reached =
                                 self.cta_bots_enemy_base_reached.len();
@@ -1084,16 +1093,30 @@ impl ArenaService for Server {
                             } else {
                                 0.0
                             };
+                            // Sum state-machine transitions across
+                            // all CTA bots. Per-bot counter is
+                            // monotonic within a life (reset on
+                            // Spawning), so summing gives total
+                            // transitions over the match.
+                            let state_transitions: u32 = context
+                                .players
+                                .iter()
+                                .filter_map(|(_, kp)| {
+                                    kp.inner.bot().map(|b| b.behavior_state.transitions_this_life)
+                                })
+                                .sum();
                             info!(
                                 "match {}: steering — terrain_deaths={} \
                                  enemy_base_reached={} \
-                                 throttle_rate={:.1}% ({}/{} ticks)",
+                                 throttle_rate={:.1}% ({}/{} ticks) \
+                                 state_transitions={}",
                                 self.match_state.match_id,
                                 terrain_deaths,
                                 enemy_base_reached,
                                 throttle_rate_pct,
                                 throttled,
                                 alive,
+                                state_transitions,
                             );
                         }
                     }
