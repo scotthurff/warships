@@ -14,6 +14,7 @@
 
 mod arena;
 mod bot;
+mod bot_pathfinder;
 mod collision;
 mod complete_ref;
 mod contact_ref;
