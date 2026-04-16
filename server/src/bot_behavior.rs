@@ -396,7 +396,12 @@ fn compute_output(state: &mut BehaviorState, inputs: &BehaviorInputs) -> Behavio
             };
         }
         State::Transiting { committing: true } => {
-            (LOOKAHEAD_SECS_COMMITTING, 1.0, true)
+            // Keep Phase 3b throttle active during commit. Earlier
+            // draft bypassed it ("push through base arms at full
+            // speed") but measurement showed rushers dying on
+            // terrain 57×/match. Full commit = path commitment (no
+            // engaging detour), not "ignore turn physics."
+            (LOOKAHEAD_SECS_COMMITTING, 1.0, false)
         }
         State::Transiting { committing: false } => {
             (LOOKAHEAD_SECS_TRANSITING, 1.0, false)
@@ -446,18 +451,13 @@ fn compute_output(state: &mut BehaviorState, inputs: &BehaviorInputs) -> Behavio
     // Bounded local perturbation: terrain repel (capped ≤20°).
     direction_angle = apply_terrain_repel(direction_angle, inputs);
 
-    // Teammate separation DISABLED. The first version used a range
-    // of 2× ship-length which scales badly — at Iowa's 270 m length,
-    // that's a 540 m dodge zone triggering constant heading
-    // perturbation whenever ANY teammate is within half a kilometer.
-    // Ships swerved off-path into surviving sparsen islands,
-    // regressing terrain_deaths from 37 to 67 in live measurement.
-    // Keeping the `apply_teammate_separation` function defined for
-    // future reuse with fixed-distance (not length-scaled) range;
-    // the call is removed. Bots may bump into each other
-    // occasionally — that's a less-bad failure mode than swerving
-    // into land.
-    // (Previously: direction_angle = apply_teammate_separation(...))
+    // Teammate separation — gentle nudge (8° cap) when a teammate
+    // is within 80 m. Fixed distance (not length-scaled) so big
+    // ships don't get absurd dodge zones. First version used
+    // 2× ship-length (540 m at Iowa) and caused swerve-into-terrain
+    // regression; this version is tight enough to prevent defender
+    // stacking without destabilizing transit paths.
+    direction_angle = apply_teammate_separation(direction_angle, inputs);
 
     // Torpedo dodge (one-shot, cooldown-gated).
     direction_angle = apply_torpedo_dodge_if_needed(direction_angle, inputs, state);
@@ -571,20 +571,24 @@ fn apply_terrain_repel(direction: Angle, inputs: &BehaviorInputs) -> Angle {
     direction + Angle::from_radians(rotation)
 }
 
+const TEAMMATE_SEP_RANGE_M: f32 = 80.0;
+const TEAMMATE_SEP_CAP_DEG: f32 = 8.0;
+
 fn apply_teammate_separation(direction: Angle, inputs: &BehaviorInputs) -> Angle {
     let Some(mate) = inputs.nearest_teammate else {
         return direction;
     };
     let to_mate = mate - inputs.ship_pos;
     let dist = to_mate.length();
-    if dist < 0.1 || dist > inputs.ship_length * 2.0 {
+    if dist < 0.1 || dist > TEAMMATE_SEP_RANGE_M {
         return direction;
     }
-    // Rotate `direction` away from the teammate by up to 15°, with
-    // magnitude proportional to closeness (full 15° at touching,
-    // 0° at 2× ship-length).
-    let closeness = 1.0 - (dist / (inputs.ship_length * 2.0)).clamp(0.0, 1.0);
-    let cap_rad = 15f32.to_radians() * closeness;
+    // Rotate `direction` away from the teammate by up to 8°, with
+    // magnitude proportional to closeness (full 8° at touching,
+    // 0° at 80 m). Fixed-distance range so the dodge doesn't scale
+    // with ship size.
+    let closeness = 1.0 - (dist / TEAMMATE_SEP_RANGE_M).clamp(0.0, 1.0);
+    let cap_rad = TEAMMATE_SEP_CAP_DEG.to_radians() * closeness;
     let mate_dir = to_mate.normalize_or_zero();
     let current_vec = direction.to_vec();
     let cross_sign = current_vec.x * mate_dir.y - current_vec.y * mate_dir.x;
