@@ -16,6 +16,7 @@ mod arena;
 mod bot;
 mod bot_pathfinder;
 mod collision;
+mod cta_terrain;
 mod complete_ref;
 mod contact_ref;
 mod entities;

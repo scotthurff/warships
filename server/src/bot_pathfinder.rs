@@ -33,7 +33,16 @@ use std::collections::BinaryHeap;
 
 /// Meters per grid cell. Matches `common::terrain::SCALE` so one
 /// flow cell corresponds to one terrain pixel.
-pub const CELL_SIZE: f32 = 25.0;
+// 50 m cells (not 25 m). At GRID_SIZE = 128 this gives ±3200 m
+// world coverage — enough for the expanded CTA arena (bases at
+// y = ±1000, world radius floor 3000 m) at zero memory cost vs
+// the old 25 m / 128 configuration. Ship turn radii (100–270 m)
+// don't benefit from sub-50-m flow resolution; the steering
+// layer's 4-sample forward trace handles sub-cell accuracy within
+// its look-ahead window. Independent of terrain SCALE in
+// common/src/terrain.rs:25 — the flow sampler reads terrain by
+// world position, so the two grids can disagree on resolution.
+pub const CELL_SIZE: f32 = 50.0;
 
 /// Grid side length in cells. 128 × 25 m = 3200 m, enough to cover
 /// the 1500 m-radius CTA arena plus a small margin.

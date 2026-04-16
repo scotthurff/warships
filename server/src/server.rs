@@ -262,17 +262,26 @@ impl Server {
         }
     }
 
-    /// Build both CTA flow fields from the current terrain. Called on
-    /// every CTA match start (tick-loop bootstrap, Spawn-handler
-    /// bootstrap, and Play Again). Sub-millisecond per field on a
-    /// 128×128 grid, well under the 100 ms tick budget.
+    /// Sparsen the CTA corridor terrain (once per match start, before
+    /// the flow fields see it) and build both flow fields from the
+    /// sparsened terrain. Called from the tick-loop bootstrap, the
+    /// Spawn-handler bootstrap, and Play Again.
+    ///
+    /// Sub-millisecond per field on a 128×128 grid. The sparsen pass
+    /// adds ~5000 terrain writes and runs in a few ms total, well
+    /// under the 100 ms tick budget. See
+    /// plans/cta-arena-expand-and-sparsen.md.
     fn build_flow_fields(&mut self) {
         use crate::bot_pathfinder::FlowField;
-        let blue_base = ArenaLayout::DEFAULT.blue_base;
-        let red_base = ArenaLayout::DEFAULT.red_base;
+        use crate::cta_terrain::sparsen_cta_corridor;
+        let layout = ArenaLayout::DEFAULT;
         let t0 = std::time::Instant::now();
-        self.flow_to_blue = Some(FlowField::build(&self.world.terrain, blue_base));
-        self.flow_to_red = Some(FlowField::build(&self.world.terrain, red_base));
+        // Sparsen FIRST so the flow field routes against the final
+        // terrain shape. Doing this after the field is built would
+        // leave the integration values stale.
+        sparsen_cta_corridor(&mut self.world.terrain, &layout);
+        self.flow_to_blue = Some(FlowField::build(&self.world.terrain, layout.blue_base));
+        self.flow_to_red = Some(FlowField::build(&self.world.terrain, layout.red_base));
         info!("flow fields built in {:?}", t0.elapsed());
         #[cfg(debug_assertions)]
         {
