@@ -61,6 +61,28 @@ pub struct Server {
     /// enter the zone within 60 s of match start).
     #[cfg(debug_assertions)]
     cta_contested_zone_visitors: std::collections::HashSet<PlayerId>,
+    /// Steering-layer acceptance counters (plans/non-holonomic-ship-
+    /// steering.md). Cleared on match start; logged on MatchEnded.
+    ///
+    /// `cta_bots_enemy_base_reached` — bots that entered within
+    /// 250 m of the ENEMY base while alive. Gate: ≥ 1 bot per team
+    /// per match (confirms end-to-end routing).
+    ///
+    /// `cta_bot_ticks_throttled` + `cta_bot_alive_ticks` — counted
+    /// every outer tick across every alive bot in CTA. Ratio gives
+    /// the throttle rate; gate: ≤ 40% (catches the regression mode
+    /// where bots survive by crawling through open water instead of
+    /// actually turning hard in tight spots).
+    ///
+    /// `World::cta_bot_terrain_deaths` lives on World because it
+    /// needs to increment inside `World::physics` where entity→player
+    /// lookup is available. Server reads it on MatchEnded.
+    #[cfg(debug_assertions)]
+    cta_bots_enemy_base_reached: std::collections::HashSet<PlayerId>,
+    #[cfg(debug_assertions)]
+    cta_bot_ticks_throttled: u32,
+    #[cfg(debug_assertions)]
+    cta_bot_alive_ticks: u32,
 }
 
 impl Server {
@@ -253,7 +275,13 @@ impl Server {
         self.flow_to_red = Some(FlowField::build(&self.world.terrain, red_base));
         info!("flow fields built in {:?}", t0.elapsed());
         #[cfg(debug_assertions)]
-        self.cta_contested_zone_visitors.clear();
+        {
+            self.cta_contested_zone_visitors.clear();
+            self.cta_bots_enemy_base_reached.clear();
+            self.cta_bot_ticks_throttled = 0;
+            self.cta_bot_alive_ticks = 0;
+            self.world.cta_bot_terrain_deaths = 0;
+        }
     }
 
     /// Build a `BoatSnapshot` for every alive boat whose player has a
@@ -559,6 +587,12 @@ impl ArenaService for Server {
             flow_to_red: None,
             #[cfg(debug_assertions)]
             cta_contested_zone_visitors: std::collections::HashSet::new(),
+            #[cfg(debug_assertions)]
+            cta_bots_enemy_base_reached: std::collections::HashSet::new(),
+            #[cfg(debug_assertions)]
+            cta_bot_ticks_throttled: 0,
+            #[cfg(debug_assertions)]
+            cta_bot_alive_ticks: 0,
         }
     }
 
@@ -921,21 +955,61 @@ impl ArenaService for Server {
                 }
             }
 
-            // Dev-only: sample which bots are in the 300 m contested
-            // zone around the arena center this tick. Unique-visitor
-            // count is logged on match end as a pathfinding rollout
-            // acceptance metric.
+            // Dev-only: per-bot sampling for acceptance metrics this
+            // tick. Existing contested-zone visitor count (pathfinding
+            // rollout) is joined by steering-layer counters for
+            // plans/non-holonomic-ship-steering.md:
+            //   - alive-ticks baseline (throttle-rate denominator)
+            //   - throttled-ticks numerator (pending_speed_scale < 0.9)
+            //   - enemy-base reach (end-to-end routing check)
             #[cfg(debug_assertions)]
             {
+                use crate::match_state::{ArenaLayout, Team};
                 const CONTESTED_RADIUS_SQ: f32 = 300.0 * 300.0;
+                const BASE_REACHED_RADIUS_SQ: f32 = 250.0 * 250.0;
                 for p in self.player.iter_borrow() {
                     if !p.is_bot() || p.match_team.is_none() {
                         continue;
                     }
+                    let team = p.match_team.unwrap();
                     if let Status::Alive { entity_index, .. } = p.status {
                         let pos = self.world.entities[entity_index].transform.position;
+
+                        // Contested-zone (existing metric).
                         if pos.length_squared() < CONTESTED_RADIUS_SQ {
                             self.cta_contested_zone_visitors.insert(p.player_id);
+                        }
+
+                        // Steering: alive-tick baseline.
+                        self.cta_bot_alive_ticks =
+                            self.cta_bot_alive_ticks.saturating_add(1);
+
+                        // Steering: throttled-tick numerator. Bot
+                        // state lives in kodiak's Player<G>.inner, not
+                        // our TempPlayer — reach across to context's
+                        // player repo to read `pending_speed_scale`.
+                        // Extract the scalar first so the inner bot
+                        // borrow is released before the self mutation.
+                        let is_throttled = context
+                            .players
+                            .get(p.player_id)
+                            .and_then(|kp| kp.inner.bot())
+                            .map(|b| b.pending_speed_scale < 0.9)
+                            .unwrap_or(false);
+                        if is_throttled {
+                            self.cta_bot_ticks_throttled =
+                                self.cta_bot_ticks_throttled.saturating_add(1);
+                        }
+
+                        // Steering: enemy-base reach. Per-team enemy
+                        // base lookup — Blue's enemy is Red's base
+                        // and vice versa.
+                        let enemy_base = match team {
+                            Team::Blue => ArenaLayout::DEFAULT.red_base,
+                            Team::Red => ArenaLayout::DEFAULT.blue_base,
+                        };
+                        if (pos - enemy_base).length_squared() < BASE_REACHED_RADIUS_SQ {
+                            self.cta_bots_enemy_base_reached.insert(p.player_id);
                         }
                     }
                 }
@@ -983,6 +1057,34 @@ impl ArenaService for Server {
                             info!(
                                 "match {}: {} unique bots entered contested zone",
                                 self.match_state.match_id, n
+                            );
+
+                            // Steering-layer acceptance metrics (see
+                            // plans/non-holonomic-ship-steering.md).
+                            // Pass criteria across 3 consecutive matches:
+                            //   1. terrain_deaths ≤ 2
+                            //   2. enemy_base_reached ≥ 1
+                            //   3. throttle_rate ≤ 40%
+                            let terrain_deaths = self.world.cta_bot_terrain_deaths;
+                            let enemy_base_reached =
+                                self.cta_bots_enemy_base_reached.len();
+                            let throttled = self.cta_bot_ticks_throttled;
+                            let alive = self.cta_bot_alive_ticks;
+                            let throttle_rate_pct = if alive > 0 {
+                                (throttled as f32 / alive as f32) * 100.0
+                            } else {
+                                0.0
+                            };
+                            info!(
+                                "match {}: steering — terrain_deaths={} \
+                                 enemy_base_reached={} \
+                                 throttle_rate={:.1}% ({}/{} ticks)",
+                                self.match_state.match_id,
+                                terrain_deaths,
+                                enemy_base_reached,
+                                throttle_rate_pct,
+                                throttled,
+                                alive,
                             );
                         }
                     }

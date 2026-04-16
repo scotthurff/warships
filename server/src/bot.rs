@@ -56,6 +56,16 @@ pub struct Bot {
     /// flow sample so the local terrain/teammate repel can escape
     /// an awkward corner. Resets to 0 as soon as speed recovers.
     cta_stuck_ticks: u16,
+    /// Turn-budget speed throttle in [0.3, 1.0]. Computed by the
+    /// outer update from the multi-cell forward trace; applied by
+    /// the *next* inner update's `velocity_target`. The `pending_`
+    /// prefix signals the one-tick latch — it is NOT the current
+    /// tick's effective scale. See plans/non-holonomic-ship-steering.md.
+    ///
+    /// `pub` because Server's per-tick telemetry block reads this
+    /// across the kodiak Player<G>.inner.bot() path to count
+    /// throttled ticks.
+    pub pending_speed_scale: f32,
 }
 
 impl Default for Bot {
@@ -96,6 +106,7 @@ impl Default for Bot {
             cta_movement_target: None,
             cta_flow_direction: None,
             cta_stuck_ticks: 0,
+            pending_speed_scale: 1.0,
         }
     }
 }
@@ -429,7 +440,14 @@ impl Bot {
                     // Bumped from (0.65 / 0.80 / 0.90) — old values
                     // made bots feel sluggish. With CTA's tighter
                     // arena, faster bots actually push the objective.
-                    velocity_target: data.speed * match common::Difficulty::get_global() {
+                    //
+                    // Multiplied by `pending_speed_scale` to apply
+                    // the non-holonomic turn-budget throttle computed
+                    // in the previous outer update. Defaults to 1.0
+                    // for non-CTA bots and when the trace finds no
+                    // required turn, so this is a no-op outside CTA
+                    // or in open water.
+                    velocity_target: data.speed * self.pending_speed_scale * match common::Difficulty::get_global() {
                         common::Difficulty::Captain => 0.80,
                         common::Difficulty::Admiral => 0.88,
                         common::Difficulty::FleetCommander => 0.95,
@@ -527,6 +545,11 @@ impl kodiak_server::Bot<Server> for Bot {
             struct TargetInputs {
                 movement_target: Option<Vec2>,
                 flow_direction: Option<Vec2>,
+                /// Turn-budget speed throttle in [0.3, 1.0]. Consumed
+                /// by the NEXT inner update's `velocity_target`. 1.0
+                /// outside CTA and in open water where no throttle is
+                /// needed.
+                speed_scale: f32,
                 stuck_ticks_delta: StuckDelta,
             }
             enum StuckDelta {
@@ -539,6 +562,7 @@ impl kodiak_server::Bot<Server> for Bot {
                 None => TargetInputs {
                     movement_target: None,
                     flow_direction: None,
+                    speed_scale: 1.0,
                     stuck_ticks_delta: StuckDelta::Reset,
                 },
                 Some(team) => {
@@ -564,19 +588,21 @@ impl kodiak_server::Bot<Server> for Bot {
                     // defenders sample the field pointing at their
                     // own base. If not alive (Spawning/Dead), no
                     // bot_pos to sample at — leave flow None.
-                    // Alive → (position, heading, speed). Dead/Spawning
-                    // → leave flow None and reset stuck counter so the
-                    // next spawn starts fresh.
-                    let alive_state: Option<(Vec2, Vec2, f32)> = {
+                    // Alive → (position, heading, speed, length).
+                    // Dead/Spawning → leave flow None and reset stuck
+                    // counter so the next spawn starts fresh.
+                    let alive_state: Option<(Vec2, Vec2, f32, f32)> = {
                         let p = player_tuple.borrow_player();
                         match p.status {
                             Status::Alive { entity_index, .. } => {
                                 let e = &server.world.entities[entity_index];
                                 let speed = e.transform.velocity.to_mps();
+                                let length = e.entity_type.data().length;
                                 Some((
                                     e.transform.position,
                                     e.transform.direction.to_vec(),
                                     speed,
+                                    length,
                                 ))
                             }
                             _ => None,
@@ -595,36 +621,152 @@ impl kodiak_server::Bot<Server> for Bot {
                         }
                     };
 
-                    // LOOK-AHEAD SAMPLING: sample the flow field at
-                    // where the ship will be in LOOKAHEAD_SECS, not
-                    // where it is now. Ship-like agents need temporal
-                    // headroom for momentum + turning radius; a
-                    // current-position sample produces steering
-                    // commands that arrive too late to turn before
-                    // the next cell. Standard technique in RTS games
-                    // with ship kinematics (SupCom 2, Homeworld).
+                    // Multi-cell forward trace for non-holonomic
+                    // steering. See plans/non-holonomic-ship-steering.md.
                     //
-                    // Falls back to current-position sample if the
-                    // look-ahead point is outside the grid or on a
-                    // blocked cell. Falls back again to None if both
-                    // fail; caller uses direct-to-goal.
-                    const LOOKAHEAD_SECS: f32 = 1.5;
-                    let flow_direction = alive_state.and_then(|(pos, heading, speed)| {
-                        field.and_then(|f| {
-                            let ahead = pos + heading * speed * LOOKAHEAD_SECS;
-                            f.sample(ahead).or_else(|| f.sample(pos))
-                        })
-                    });
+                    // The flow field routes correctly, but ships have
+                    // turn-rate × speed × cell-size mismatches that
+                    // make cell-granular headings unexecutable at
+                    // cruise speed. A single look-ahead sample sees
+                    // only the endpoint and misses mid-path bends;
+                    // this 4-sample trace picks up the tightest turn
+                    // anywhere along the projected arc, and a speed
+                    // throttle scales velocity down when that turn
+                    // exceeds the ship's budget.
+                    let (flow_direction, speed_scale) =
+                        if let (Some(f), Some((pos, heading, speed, length))) =
+                            (field, alive_state)
+                        {
+                            // Velocity-adaptive look-ahead TIME.
+                            // Slow-turning ships (Iowa, longer length)
+                            // need more time to plan ahead. Mirrors
+                            // the turn-rate formula at
+                            // common/src/transform.rs:70.
+                            let turn_rate = 0.125 + 20.0 / length;
+                            let time_for_90_deg =
+                                std::f32::consts::FRAC_PI_2 / turn_rate;
+                            // 0.6× the 90° turn time: Iowa ~4.8 s,
+                            // Lürssen ~1.2 s. Clamped to [1.0, 5.0]:
+                            // below 1.0 the trace collapses into a
+                            // single cell; above 5.0 it reaches past
+                            // tactically useful context.
+                            let lookahead_secs =
+                                (time_for_90_deg * 0.6).clamp(1.0, 5.0);
+
+                            // 4-sample forward trace. ~40 bots × 4
+                            // samples × 10 Hz = 1.6k flow lookups/sec
+                            // against a flat cell array — negligible.
+                            // Short ships (Lürssen, 1.2 s ≈ 16 m)
+                            // over-sample within one cell; fine, the
+                            // code path stays uniform across classes.
+                            const TRACE_SAMPLES: usize = 4;
+                            let heading_angle = Angle::from(heading);
+                            let mut worst_turn_rad: f32 = 0.0;
+                            let mut first_flow: Option<Vec2> = None;
+                            let mut blocked_samples: u32 = 0;
+
+                            for i in 1..=TRACE_SAMPLES {
+                                let t = lookahead_secs
+                                    * (i as f32)
+                                    / (TRACE_SAMPLES as f32);
+                                let sample_pos = pos + heading * speed * t;
+
+                                // Blocked-cell handling: SKIP blocked
+                                // samples rather than substituting a
+                                // stand-in direction. A stand-in
+                                // papers over exactly the tight-
+                                // corridor case the trace exists to
+                                // catch. Count them; majority-blocked
+                                // forces floor below.
+                                let Some(flow) = f.sample(sample_pos) else {
+                                    blocked_samples += 1;
+                                    continue;
+                                };
+
+                                // First non-blocked sample becomes
+                                // the steering direction (closest to
+                                // the ship). worst_turn_rad separately
+                                // guards against committing to a
+                                // sharper turn further out.
+                                if first_flow.is_none() {
+                                    first_flow = Some(flow);
+                                }
+
+                                // Angle::sub uses i16 wrapping_sub →
+                                // wraps into [-PI, PI] by construction;
+                                // no ±PI seam bug. See kodiak's
+                                // common/src/math/angle.rs:285-290.
+                                let flow_angle = Angle::from(flow);
+                                let delta_rad = (flow_angle - heading_angle)
+                                    .abs()
+                                    .to_radians();
+                                if delta_rad > worst_turn_rad {
+                                    worst_turn_rad = delta_rad;
+                                }
+                            }
+
+                            let majority_blocked =
+                                blocked_samples * 2 > TRACE_SAMPLES as u32;
+
+                            // Turn-budget throttle.
+                            //
+                            // over_budget crosses zero at 50% of
+                            // budget — ship starts throttling BEFORE
+                            // it runs out of turn capacity (three-mode
+                            // AV pattern). Tuned so an Iowa at 60°
+                            // turn (1.047 rad) vs. 0.96 rad budget
+                            // throttles to 59% of max. Higher than
+                            // 0.5 leaves no margin for next-tick drift.
+                            //
+                            // 0.7 slope: at 1.0× budget → ~0.65; at
+                            // 2.0× budget → 0.3 (floor). Steeper
+                            // cliff-drops on small excess; shallower
+                            // lets too-fast ships drift into terrain.
+                            //
+                            // 0.3 floor: below ~3 m/s max_accel
+                            // (common/src/transform.rs:96) caps
+                            // angular response. Keep forward momentum.
+                            let turn_budget_rad = turn_rate * lookahead_secs;
+                            let slow_factor = if majority_blocked {
+                                // Trace projected into land — trust
+                                // that signal over the turn-budget
+                                // math. Floor regardless of surviving
+                                // sample deltas.
+                                0.3
+                            } else {
+                                let over_budget = (worst_turn_rad
+                                    / turn_budget_rad
+                                    - 0.5)
+                                    .max(0.0);
+                                (1.0 - over_budget * 0.7).clamp(0.3, 1.0)
+                            };
+
+                            // If all 4 ahead-samples were blocked,
+                            // fall back to the current-position
+                            // sample so the inner update still has a
+                            // flow vector to follow (the 0.3 floor
+                            // keeps the ship slow enough to turn).
+                            // Returns None only when BOTH ahead AND
+                            // current-position samples are blocked.
+                            let flow_out = first_flow.or_else(|| f.sample(pos));
+                            (flow_out, slow_factor)
+                        } else {
+                            // Not alive, or no flow field →
+                            // passthrough: no flow direction, no
+                            // speed throttle.
+                            (None, 1.0)
+                        };
 
                     let stuck_ticks_delta = match alive_state {
                         None => StuckDelta::Reset,
-                        Some((_, _, speed)) if speed < 1.0 => StuckDelta::Increment,
+                        Some((_, _, speed, _)) if speed < 1.0 => StuckDelta::Increment,
                         Some(_) => StuckDelta::Reset,
                     };
 
                     TargetInputs {
                         movement_target: Some(target),
                         flow_direction,
+                        speed_scale,
                         stuck_ticks_delta,
                     }
                 }
@@ -633,6 +775,7 @@ impl kodiak_server::Bot<Server> for Bot {
             let bot_state = player.inner.bot_mut().unwrap();
             bot_state.cta_teammate_ids = teammate_ids;
             bot_state.cta_movement_target = inputs.movement_target;
+            bot_state.pending_speed_scale = inputs.speed_scale;
 
             // Apply stuck-detection state transition.
             match inputs.stuck_ticks_delta {

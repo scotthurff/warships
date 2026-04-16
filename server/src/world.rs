@@ -23,6 +23,14 @@ pub struct World {
     /// platforms, and HQs don't clutter the playfield or distract bot
     /// AI from the actual objective.
     pub suppress_statics: bool,
+    /// Steering-layer acceptance counter — bot-owned boats lost to
+    /// DeathReason::Terrain during the current CTA match. Incremented
+    /// by `World::physics`; reset on match start by Server. Lives
+    /// here rather than on Server because it needs to increment
+    /// inside the physics fate loop where entity→player lookup is
+    /// available. See plans/non-holonomic-ship-steering.md.
+    #[cfg(debug_assertions)]
+    pub cta_bot_terrain_deaths: u32,
 }
 
 impl World {
@@ -34,6 +42,8 @@ impl World {
             terrain: new_terrain(),
             radius: initial_radius,
             suppress_statics: false,
+            #[cfg(debug_assertions)]
+            cta_bot_terrain_deaths: 0,
         }
     }
 

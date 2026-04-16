@@ -393,6 +393,26 @@ impl World {
         for (index, fate) in fates {
             match fate {
                 Fate::Remove(reason) => {
+                    // Acceptance counter (debug-only): count bot-owned
+                    // boats lost to terrain. Checked BEFORE self.remove
+                    // so the entity's player lookup is still valid.
+                    // Uses `PlayerId::is_bot` via `TempPlayer::is_bot`
+                    // — faster than threading kodiak's Player<G> here
+                    // and sufficient for this counter (bot ownership
+                    // is a property of the ID, not per-tick state).
+                    // See plans/non-holonomic-ship-steering.md.
+                    #[cfg(debug_assertions)]
+                    if matches!(reason, DeathReason::Terrain) {
+                        let is_bot_boat = self.entities[index]
+                            .player
+                            .as_ref()
+                            .map(|pt| pt.borrow_player().is_bot())
+                            .unwrap_or(false);
+                        if is_bot_boat {
+                            self.cta_bot_terrain_deaths =
+                                self.cta_bot_terrain_deaths.saturating_add(1);
+                        }
+                    }
                     self.remove(index, reason);
                 }
                 Fate::MoveSector => {
