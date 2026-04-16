@@ -421,11 +421,18 @@ fn compute_output(state: &mut BehaviorState, inputs: &BehaviorInputs) -> Behavio
     // Bounded local perturbation: terrain repel (capped ≤20°).
     direction_angle = apply_terrain_repel(direction_angle, inputs);
 
-    // Teammate separation: small perpendicular nudge (≤15° cap)
-    // when a teammate is within 2× ship-length. Bots pathing the
-    // same flow field converge on the same trajectory — without
-    // this, they pile up and collide, forcing swerves into terrain.
-    direction_angle = apply_teammate_separation(direction_angle, inputs);
+    // Teammate separation DISABLED. The first version used a range
+    // of 2× ship-length which scales badly — at Iowa's 270 m length,
+    // that's a 540 m dodge zone triggering constant heading
+    // perturbation whenever ANY teammate is within half a kilometer.
+    // Ships swerved off-path into surviving sparsen islands,
+    // regressing terrain_deaths from 37 to 67 in live measurement.
+    // Keeping the `apply_teammate_separation` function defined for
+    // future reuse with fixed-distance (not length-scaled) range;
+    // the call is removed. Bots may bump into each other
+    // occasionally — that's a less-bad failure mode than swerving
+    // into land.
+    // (Previously: direction_angle = apply_teammate_separation(...))
 
     // Torpedo dodge (one-shot, cooldown-gated).
     direction_angle = apply_torpedo_dodge_if_needed(direction_angle, inputs, state);
