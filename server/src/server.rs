@@ -46,6 +46,21 @@ pub struct Server {
     /// player is in `GameMode::CaptureTheArea`. Players in Free Roam are
     /// unaffected.
     pub match_state: MatchState,
+    /// Flow field pointing toward the Blue base. Sampled by Red
+    /// attackers and Blue defenders. Built once per CTA match start;
+    /// cleared on quit-to-title and reset_to_waiting.
+    pub flow_to_blue: Option<crate::bot_pathfinder::FlowField>,
+    /// Flow field pointing toward the Red base. Sampled by Blue
+    /// attackers and Red defenders.
+    pub flow_to_red: Option<crate::bot_pathfinder::FlowField>,
+    /// Dev-only instrumentation: the set of PlayerIds that have
+    /// visited the 300 m "contested zone" around the arena center
+    /// during the current CTA match. Cleared on match start,
+    /// logged on MatchEnded. Acceptance criterion for the
+    /// pathfinding rollout (≥ 2 teammate + ≥ 2 enemy bots should
+    /// enter the zone within 60 s of match start).
+    #[cfg(debug_assertions)]
+    cta_contested_zone_visitors: std::collections::HashSet<PlayerId>,
 }
 
 impl Server {
@@ -103,6 +118,10 @@ impl Server {
         // Reset the FSM. match_id bumps so stale client MatchUpdates
         // are discarded; phase returns to Countdown for the new intro.
         self.match_state.reset();
+
+        // Rebuild flow fields — terrain may have been damaged by
+        // weapons/icebreakers during the previous match.
+        self.build_flow_fields();
 
         info!(
             "match {} countdown starting (post play-again)",
@@ -174,6 +193,11 @@ impl Server {
         //    (tick loop at line ~793 or Spawn handler at line ~537) sees
         //    `phase == Waiting` and runs the fresh-match bootstrap.
         self.match_state.reset_to_waiting();
+
+        // Drop flow fields. They'll be rebuilt when someone enters
+        // CTA again.
+        self.flow_to_blue = None;
+        self.flow_to_red = None;
     }
 
     /// One-time cleanup of pre-existing static entities when a CTA
@@ -214,6 +238,20 @@ impl Server {
                 None => break,
             }
         }
+    }
+
+    /// Build both CTA flow fields from the current terrain. Called on
+    /// every CTA match start (tick-loop bootstrap, Spawn-handler
+    /// bootstrap, and Play Again). Sub-millisecond per field on a
+    /// 128×128 grid, well under the 100 ms tick budget.
+    fn build_flow_fields(&mut self) {
+        use crate::bot_pathfinder::FlowField;
+        let blue_base = ArenaLayout::DEFAULT.blue_base;
+        let red_base = ArenaLayout::DEFAULT.red_base;
+        self.flow_to_blue = Some(FlowField::build(&self.world.terrain, blue_base));
+        self.flow_to_red = Some(FlowField::build(&self.world.terrain, red_base));
+        #[cfg(debug_assertions)]
+        self.cta_contested_zone_visitors.clear();
     }
 
     /// Build a `BoatSnapshot` for every alive boat whose player has a
@@ -515,6 +553,10 @@ impl ArenaService for Server {
                 0
             },
             match_state: MatchState::new(),
+            flow_to_blue: None,
+            flow_to_red: None,
+            #[cfg(debug_assertions)]
+            cta_contested_zone_visitors: std::collections::HashSet::new(),
         }
     }
 
@@ -581,6 +623,7 @@ impl ArenaService for Server {
                         self.match_state.start_match();
                         self.assign_match_teams();
                         self.clear_statics();
+                        self.build_flow_fields();
                         info!(
                             "match {} started (via Spawn)",
                             self.match_state.match_id
@@ -840,6 +883,7 @@ impl ArenaService for Server {
                 // oil platforms, HQs) carried over from the prior free-
                 // roam session so the CTA arena starts clean.
                 self.clear_statics();
+                self.build_flow_fields();
                 info!(
                     "match {} started (Capture the Area)",
                     self.match_state.match_id
@@ -872,6 +916,26 @@ impl ArenaService for Server {
                 // Release the player borrow before touching match_state.
                 if let Some(team) = team_to_award {
                     self.match_state.record_kill(team);
+                }
+            }
+
+            // Dev-only: sample which bots are in the 300 m contested
+            // zone around the arena center this tick. Unique-visitor
+            // count is logged on match end as a pathfinding rollout
+            // acceptance metric.
+            #[cfg(debug_assertions)]
+            {
+                const CONTESTED_RADIUS_SQ: f32 = 300.0 * 300.0;
+                for p in self.player.iter_borrow() {
+                    if !p.is_bot() || p.match_team.is_none() {
+                        continue;
+                    }
+                    if let Status::Alive { entity_index, .. } = p.status {
+                        let pos = self.world.entities[entity_index].transform.position;
+                        if pos.length_squared() < CONTESTED_RADIUS_SQ {
+                            self.cta_contested_zone_visitors.insert(p.player_id);
+                        }
+                    }
                 }
             }
 
@@ -908,6 +972,17 @@ impl ArenaService for Server {
                             "match {} ended: winner={:?} blue={} red={}",
                             self.match_state.match_id, winner, blue_score, red_score
                         );
+                        #[cfg(debug_assertions)]
+                        {
+                            // Pathfinding acceptance metric (see
+                            // plans/cta-bot-pathfinding.md): count unique
+                            // bots that visited the 300 m contested zone.
+                            let n = self.cta_contested_zone_visitors.len();
+                            info!(
+                                "match {}: {} unique bots entered contested zone",
+                                self.match_state.match_id, n
+                            );
+                        }
                     }
                 }
             }

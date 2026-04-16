@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 Softbear, Inc.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use crate::player::Status;
 use crate::server::Server;
 use common::altitude::Altitude;
 use common::angle::Angle;
@@ -41,8 +42,20 @@ pub struct Bot {
     cta_teammate_ids: Vec<PlayerId>,
     /// Where the bot wants to move toward in CTA — usually the enemy base
     /// for offense, or own base if it's being captured (defense).
-    /// `None` in Free Roam.
+    /// `None` in Free Roam. Sampled by the inner update as the
+    /// fallback when `cta_flow_direction` is None (out-of-grid,
+    /// blocked cell, or stuck suppression).
     cta_movement_target: Option<Vec2>,
+    /// Flow-field-sampled desired heading. Replaces the direct-to-
+    /// target pull when Some. None means: no field built (not in a
+    /// CTA match), bot is on a blocked cell, or bot is stuck and
+    /// we're letting local avoidance escape.
+    cta_flow_direction: Option<Vec2>,
+    /// Count of consecutive ticks with velocity < 1 m/s while in
+    /// CTA attack mode. At 30 ticks (3 s at 10 Hz) we suppress the
+    /// flow sample so the local terrain/teammate repel can escape
+    /// an awkward corner. Resets to 0 as soon as speed recovers.
+    cta_stuck_ticks: u16,
 }
 
 impl Default for Bot {
@@ -81,6 +94,8 @@ impl Default for Bot {
             was_submerging: false,
             cta_teammate_ids: Vec::new(),
             cta_movement_target: None,
+            cta_flow_direction: None,
+            cta_stuck_ticks: 0,
         }
     }
 }
@@ -269,24 +284,20 @@ impl Bot {
                 }
             }
 
-            // Push the objective: pull steadily toward the CTA movement
-            // target (enemy base for offense, own base for defense). The
-            // weight is moderate so combat priorities (enemy spring,
-            // weapon dodge, terrain repel) still dominate when an
-            // engagement is happening, but in the open the bot drives
-            // toward the objective instead of wandering.
-            if let Some(target) = self.cta_movement_target {
+            // Push the objective. Prefer the flow-field direction
+            // (terrain-aware routing around islands and the arena
+            // edge) when available, falling through to the direct-
+            // to-target unit vector as a last resort (flow field
+            // not built, bot on a blocked cell, or stuck-detection
+            // suppression).
+            let in_combat = closest_enemy.is_some();
+            let weight = if in_combat { 1.5 } else { 6.0 };
+            if let Some(flow_dir) = self.cta_flow_direction {
+                movement += flow_dir * weight;
+            } else if let Some(target) = self.cta_movement_target {
                 let to_target = target - boat.transform().position;
                 let dist = to_target.length();
                 if dist > 50.0 {
-                    let in_combat = closest_enemy.is_some();
-                    // Waypoint routing handles terrain navigation;
-                    // the forward_block_ratio dampen from the
-                    // pre-pathfinding era is gone. Objective pull
-                    // is now clearly the dominant force on open
-                    // water. Combat weight stays low so bots engage
-                    // instead of autopiloting past the fight.
-                    let weight = if in_combat { 1.5 } else { 6.0 };
                     movement += (to_target / dist) * weight;
                 }
             }
@@ -507,35 +518,116 @@ impl kodiak_server::Bot<Server> for Bot {
 
             // Pick a movement target. If our base is being captured
             // (>5s of enemy capture progress), defend at own base;
-            // otherwise push the enemy base directly. Routing is
-            // currently straight-line — the flow-field pathfinding
-            // (Phase 1 of plans/cta-bot-pathfinding.md, next commit)
-            // will replace this with a terrain-aware sample.
-            let movement_target: Option<Vec2> = my_match_team.map(|team| {
-                use crate::match_state::ArenaLayout;
-                let m = &server.match_state;
-                let (own_base, enemy_base, defense_progress_ms) = match team {
-                    crate::match_state::Team::Blue => (
-                        ArenaLayout::DEFAULT.blue_base,
-                        ArenaLayout::DEFAULT.red_base,
-                        m.blue_base_capture.as_millis(),
-                    ),
-                    crate::match_state::Team::Red => (
-                        ArenaLayout::DEFAULT.red_base,
-                        ArenaLayout::DEFAULT.blue_base,
-                        m.red_base_capture.as_millis(),
-                    ),
-                };
-                if defense_progress_ms > 5_000 {
-                    own_base
-                } else {
-                    enemy_base
+            // otherwise push the enemy base. The actual steering
+            // heading comes from the appropriate flow field
+            // (built once per match at match start); the direct
+            // `movement_target` Vec2 remains as a last-resort
+            // fallback for the inner update when sample returns
+            // None.
+            struct TargetInputs {
+                movement_target: Option<Vec2>,
+                flow_direction: Option<Vec2>,
+                stuck_ticks_delta: StuckDelta,
+            }
+            enum StuckDelta {
+                Keep,      // not in CTA or not tracking
+                Reset,     // bot is moving normally
+                Increment, // bot is slow
+            }
+
+            let inputs: TargetInputs = match my_match_team {
+                None => TargetInputs {
+                    movement_target: None,
+                    flow_direction: None,
+                    stuck_ticks_delta: StuckDelta::Reset,
+                },
+                Some(team) => {
+                    use crate::match_state::ArenaLayout;
+                    let m = &server.match_state;
+                    let (own_base, enemy_base, defense_progress_ms) = match team {
+                        crate::match_state::Team::Blue => (
+                            ArenaLayout::DEFAULT.blue_base,
+                            ArenaLayout::DEFAULT.red_base,
+                            m.blue_base_capture.as_millis(),
+                        ),
+                        crate::match_state::Team::Red => (
+                            ArenaLayout::DEFAULT.red_base,
+                            ArenaLayout::DEFAULT.blue_base,
+                            m.red_base_capture.as_millis(),
+                        ),
+                    };
+                    let defending = defense_progress_ms > 5_000;
+                    let target = if defending { own_base } else { enemy_base };
+
+                    // Pick the right flow field: attackers sample
+                    // the field pointing at the enemy base;
+                    // defenders sample the field pointing at their
+                    // own base. If not alive (Spawning/Dead), no
+                    // bot_pos to sample at — leave flow None.
+                    // Alive → (position, speed). Dead/Spawning →
+                    // leave flow None and reset stuck counter so
+                    // the next spawn starts fresh.
+                    let alive_state: Option<(Vec2, f32)> = {
+                        let p = player_tuple.borrow_player();
+                        match p.status {
+                            Status::Alive { entity_index, .. } => {
+                                let e = &server.world.entities[entity_index];
+                                Some((e.transform.position, e.transform.velocity.to_mps()))
+                            }
+                            _ => None,
+                        }
+                    };
+
+                    let field = if defending {
+                        match team {
+                            crate::match_state::Team::Blue => server.flow_to_blue.as_ref(),
+                            crate::match_state::Team::Red => server.flow_to_red.as_ref(),
+                        }
+                    } else {
+                        match team {
+                            crate::match_state::Team::Blue => server.flow_to_red.as_ref(),
+                            crate::match_state::Team::Red => server.flow_to_blue.as_ref(),
+                        }
+                    };
+                    let flow_direction = alive_state
+                        .and_then(|(pos, _)| field.and_then(|f| f.sample(pos)));
+
+                    let stuck_ticks_delta = match alive_state {
+                        None => StuckDelta::Reset,
+                        Some((_, speed)) if speed < 1.0 => StuckDelta::Increment,
+                        Some(_) => StuckDelta::Reset,
+                    };
+
+                    TargetInputs {
+                        movement_target: Some(target),
+                        flow_direction,
+                        stuck_ticks_delta,
+                    }
                 }
-            });
+            };
 
             let bot_state = player.inner.bot_mut().unwrap();
             bot_state.cta_teammate_ids = teammate_ids;
-            bot_state.cta_movement_target = movement_target;
+            bot_state.cta_movement_target = inputs.movement_target;
+
+            // Apply stuck-detection state transition.
+            match inputs.stuck_ticks_delta {
+                StuckDelta::Keep => {}
+                StuckDelta::Reset => bot_state.cta_stuck_ticks = 0,
+                StuckDelta::Increment => {
+                    bot_state.cta_stuck_ticks = bot_state.cta_stuck_ticks.saturating_add(1);
+                }
+            }
+
+            // If stuck for more than 30 ticks (3 s at 10 Hz),
+            // suppress the flow direction so the bot's local
+            // avoidance (terrain repel, teammate separation) can
+            // push it out of whatever corner it's caught in.
+            bot_state.cta_flow_direction = if bot_state.cta_stuck_ticks > 30 {
+                None
+            } else {
+                inputs.flow_direction
+            };
         }
 
         let update = server.world.get_player_complete(player_tuple);
