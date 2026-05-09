@@ -96,28 +96,50 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // longer fires. Fine — the user is in-match during Play Again
     // so title state is invisible; it gets reset on the next
     // actual Quit-to-Title anyway.
+    let start_requested = use_state(|| false);
     {
         let selected_mode = selected_mode.clone();
         let selected_ship = selected_ship.clone();
         let title_step = title_step.clone();
+        let start_requested = start_requested.clone();
         let in_match = props.match_update.is_some();
         use_effect_with(in_match, move |currently_in_match| {
             if !*currently_in_match {
                 selected_mode.set(GameMode::FreeRoam);
                 selected_ship.set(None);
                 title_step.set(TitleStep::ModeSelect);
+                // Belt-and-suspenders alongside the at_picker reset
+                // effect below: any quit-to-title path also clears
+                // the spawn-armed flag. Closes a transient window
+                // where status flips Playing→Spawning before
+                // title_step reaches ModeSelect, briefly satisfying
+                // the retry's deps.
+                start_requested.set(false);
             }
             || ()
         });
     }
 
+    // No fallback to a default ship. The `selected_ship.unwrap_or(G5)`
+    // pattern was the foothold for the picker auto-dismiss bug: any
+    // path that fired this callback while selected_ship was None — the
+    // 2-s spawn-retry timer, a stale `start_requested`, an iOS Safari
+    // phantom click on a disabled button — would silently spawn the
+    // player as a G5. Without the fallback, a spurious emit() is a
+    // no-op and the picker stays put. Spawning requires an explicit
+    // pick by construction, not by gating.
     let on_play = {
         let mode = *selected_mode;
         let selected_ship = selected_ship.clone();
-        gctw.send_ui_event_callback.reform(move |alias| UiEvent::Spawn {
-            alias,
-            entity_type: selected_ship.unwrap_or(EntityType::G5),
-            game_mode: mode,
+        let send_ui_event = gctw.send_ui_event_callback.clone();
+        Callback::from(move |alias: PlayerAlias| {
+            if let Some(entity_type) = *selected_ship {
+                send_ui_event.emit(UiEvent::Spawn {
+                    alias,
+                    entity_type,
+                    game_mode: mode,
+                });
+            }
         })
     };
 
@@ -150,21 +172,20 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             title_step.set(TitleStep::ModeSelect);
         })
     };
-    // True only after the player taps Start Game. Gates the spawn-
-    // retry effect below so the picker is NOT auto-dismissed by the
-    // retry timer before the player has actually requested to spawn.
-    // Reset to false when the player goes Back, switches modes,
-    // or when status leaves Spawning (i.e. the spawn succeeded and
-    // the picker is unmounted anyway).
-    let start_requested = use_state(|| false);
-
-    // "Start Game" from the ship-select step.
+    // "Start Game" from the ship-select step. Idempotent if no ship
+    // is picked: matches the visual `disabled={!has_selection}` on
+    // the button, but the redundancy is intentional — iOS Safari is
+    // known to synthesize taps in surprising places, and `on_play`
+    // is the only door we want a spawn to come through.
     let on_start_from_picker = {
         let play_cb = on_play.clone();
         let start_requested = start_requested.clone();
+        let selected_ship = selected_ship.clone();
         Callback::from(move |_: MouseEvent| {
-            start_requested.set(true);
-            play_cb.emit(default_alias());
+            if selected_ship.is_some() {
+                start_requested.set(true);
+                play_cb.emit(default_alias());
+            }
         })
     };
 
@@ -196,20 +217,28 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // interval is dropped automatically when the effect's deps
     // change (e.g. status → Playing → deps flip → cleanup runs).
     //
-    // Gated on `start_requested` so the retry only fires AFTER the
-    // player has explicitly tapped Start Game. Without this gate,
-    // the retry auto-dismissed the picker 2 s after it appeared
-    // (selected_ship still None → spawned as the fallback G5,
-    // status → Playing). See plans/ship-picker-auto-dismiss.md.
+    // Gated on `start_requested` AND `selected_ship.is_some()`. Both
+    // are required to arm the timer:
+    //   - `start_requested` says the user committed (tapped Start
+    //     Game). Without this the picker auto-dismisses 2 s after
+    //     mount.
+    //   - `has_ship` is the structural guarantee that even if the
+    //     start-flag goes stale across some session boundary we
+    //     haven't enumerated, the retry can't accidentally spawn
+    //     the player into a default ship — `on_play` is also a
+    //     no-op without a pick, so this is a redundant double-stop
+    //     by design. Two independent gates protecting the same
+    //     invariant beats one carefully-reasoned gate.
     {
         let play_cb = on_play.clone();
         let spawning = matches!(status, UiStatus::Spawning);
         let at_picker = *title_step == TitleStep::ShipSelect;
         let started = *start_requested;
+        let has_ship = selected_ship.is_some();
         use_effect_with(
-            (spawning, at_picker, started),
-            move |(spawning, at_picker, started)| {
-                if !(*spawning && *at_picker && *started) {
+            (spawning, at_picker, started, has_ship),
+            move |(spawning, at_picker, started, has_ship)| {
+                if !(*spawning && *at_picker && *started && *has_ship) {
                     return Box::new(|| ()) as Box<dyn FnOnce()>;
                 }
                 let interval = gloo_timers::callback::Interval::new(2000, move || {

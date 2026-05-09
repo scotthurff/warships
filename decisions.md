@@ -1,5 +1,43 @@
 # WARSHIPS — Decision Log
 
+## 2026-05-09: Remove G5 fallback in `on_play` — spawning requires explicit pick
+
+**Context:** The ship-picker auto-dismiss bug recurred despite the
+`start_requested` gate added in `aefe578`. Symptoms identical to the
+prior 2026-05-05 fix: picker disappears ~2 s after Continue, player
+spawns as G5 with no input. Investigation found the gate logic was
+correct in isolation — the recurring foothold was
+`selected_ship.unwrap_or(EntityType::G5)` in `on_play`. Any path
+firing `on_play.emit()` while no ship was picked produced a working
+G5 spawn, regardless of whether the surrounding gates were right.
+
+**Decision:** Remove the G5 fallback. `on_play` is now a
+`Callback<PlayerAlias>` that is a no-op when `selected_ship` is
+`None`. Spawning requires an explicit pick by construction, not by
+gating. Plus belt-and-suspenders: idempotent `on_start_from_picker`,
+`selected_ship.is_some()` added to the retry-interval deps, and a
+`start_requested` reset in the in-match effect.
+
+**Alternatives considered:**
+- *Tighten the existing gate further* — same family of fix as 2026-05-05,
+  same failure mode if any path we haven't enumerated leaks through.
+- *Add a "committed_ship: Option<EntityType>" cell that the retry uses
+  instead of live `selected_ship`* — semantically cleaner (retry
+  spawns the ship the user committed to, not the live selection), but
+  larger blast radius and not needed to fix the immediate bug.
+- *Server-side `SpawnFailed` wire message* — already documented as
+  rejected in `cta-spawn-stuck-ship-picker.md`, invasive into the mk48
+  descent.
+
+**Consequences:** Spurious `on_play.emit()` paths are now harmless —
+they dispatch nothing. The retry still fires every 2 s after a real
+Start Game tap to recover from server "no spawn slot" failures. The
+class of bug "user lands in a default ship without input" is no
+longer reachable from the client. Any future addition to the spawn
+flow that relies on a default ship type will fail loudly instead of
+silently spawning. Documented in
+`docs/solutions/ui-bugs/ship-picker-g5-fallback-foothold-2026-05-09.md`.
+
 ## 2026-04-09: Tap-to-target already works via kodiak touch→mouse conversion
 
 **Context:** Needed tap-to-target aiming for touch devices. Investigated game.rs aim_target pipeline.
