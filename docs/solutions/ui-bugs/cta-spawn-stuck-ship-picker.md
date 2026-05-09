@@ -17,6 +17,9 @@ related_files:
   - server/src/world_spawn.rs
   - server/src/match_state.rs
 tags: [cta, spawn, ship-picker, ui-lockup, retry, gloo-timers]
+last_updated: 2026-05-05
+related_docs:
+  - ship-picker-auto-dismiss-precondition-gap-2026-05-05.md
 ---
 
 # Start Game click hangs on ship-picker when CTA spawn fails
@@ -73,8 +76,19 @@ transitions away. Uses `gloo_timers::callback::Interval` inside a
 the deps change (status → Playing → effect cleanup → interval
 dropped).
 
+> **⚠ Follow-up (2026-05-05):** the gate `(spawning, at_picker)` shown
+> below was insufficient — both bits are true the moment the picker
+> mounts, so the retry auto-dismissed the picker ~2 s after it
+> appeared. The current code adds a third gate, `start_requested`, set
+> only on the explicit Start Game tap. See
+> [`ship-picker-auto-dismiss-precondition-gap-2026-05-05.md`](ship-picker-auto-dismiss-precondition-gap-2026-05-05.md)
+> for the corrected `(spawning, at_picker, started)` form, the reset
+> effect, and the precondition-gap rule. The snippet below is kept for
+> historical context — **do not copy it as-is**.
+
 ```rust
-// client/src/ui/game_ui.rs:161 (after on_start_from_picker)
+// client/src/ui/game_ui.rs:161 (after on_start_from_picker) — ORIGINAL,
+// SUPERSEDED. See follow-up doc above.
 {
     let play_cb = on_play.clone();
     let spawning = matches!(status, UiStatus::Spawning);

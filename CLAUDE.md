@@ -38,6 +38,7 @@ cd server && cargo run -- --client-authenticate-burst 999999 --http-bandwidth-li
 - `common/src/lib.rs` — game constants (name, domain)
 - `common/src/entity/_type.rs` — all 45 ship definitions
 - `client/index.html` — HTML entry, fonts, meta tags
+- `docs/solutions/` — documented solutions to past problems (UI bugs, logic errors, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
 
 ## Decision Log
 
