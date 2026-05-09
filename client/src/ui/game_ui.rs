@@ -150,16 +150,40 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
             title_step.set(TitleStep::ModeSelect);
         })
     };
+    // True only after the player taps Start Game. Gates the spawn-
+    // retry effect below so the picker is NOT auto-dismissed by the
+    // retry timer before the player has actually requested to spawn.
+    // Reset to false when the player goes Back, switches modes,
+    // or when status leaves Spawning (i.e. the spawn succeeded and
+    // the picker is unmounted anyway).
+    let start_requested = use_state(|| false);
+
     // "Start Game" from the ship-select step.
     let on_start_from_picker = {
         let play_cb = on_play.clone();
+        let start_requested = start_requested.clone();
         Callback::from(move |_: MouseEvent| {
+            start_requested.set(true);
             play_cb.emit(default_alias());
         })
     };
 
     let margin = "0.5rem";
     let status = props.status.clone();
+
+    // Reset start_requested whenever the player leaves the ship-
+    // picker step. Covers both the explicit Back button and any
+    // state path that lands them back on ModeSelect.
+    {
+        let start_requested = start_requested.clone();
+        let at_picker = *title_step == TitleStep::ShipSelect;
+        use_effect_with(at_picker, move |at_picker| {
+            if !*at_picker {
+                start_requested.set(false);
+            }
+            || ()
+        });
+    }
 
     // Spawn-retry: if the player clicks Start Game but the server
     // can't find a spawn slot (CTA pentagon slot overlapping a bot
@@ -171,19 +195,29 @@ pub fn mk48_ui(props: &PropertiesWrapper<UiProps>) -> Html {
     // player `Alive` (status transitions out of Spawning). The
     // interval is dropped automatically when the effect's deps
     // change (e.g. status → Playing → deps flip → cleanup runs).
+    //
+    // Gated on `start_requested` so the retry only fires AFTER the
+    // player has explicitly tapped Start Game. Without this gate,
+    // the retry auto-dismissed the picker 2 s after it appeared
+    // (selected_ship still None → spawned as the fallback G5,
+    // status → Playing). See plans/ship-picker-auto-dismiss.md.
     {
         let play_cb = on_play.clone();
         let spawning = matches!(status, UiStatus::Spawning);
         let at_picker = *title_step == TitleStep::ShipSelect;
-        use_effect_with((spawning, at_picker), move |(spawning, at_picker)| {
-            if !(*spawning && *at_picker) {
-                return Box::new(|| ()) as Box<dyn FnOnce()>;
-            }
-            let interval = gloo_timers::callback::Interval::new(2000, move || {
-                play_cb.emit(default_alias());
-            });
-            Box::new(move || drop(interval)) as Box<dyn FnOnce()>
-        });
+        let started = *start_requested;
+        use_effect_with(
+            (spawning, at_picker, started),
+            move |(spawning, at_picker, started)| {
+                if !(*spawning && *at_picker && *started) {
+                    return Box::new(|| ()) as Box<dyn FnOnce()>;
+                }
+                let interval = gloo_timers::callback::Interval::new(2000, move || {
+                    play_cb.emit(default_alias());
+                });
+                Box::new(move || drop(interval)) as Box<dyn FnOnce()>
+            },
+        );
     }
 
     // Mode-selector tile styling (computed outside html! since Yew's macro

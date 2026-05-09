@@ -484,6 +484,32 @@ impl World {
 
                             mutate(boat, Mutation::CollidedWithBoat{other_player: Arc::clone(other_boat.player.as_ref().unwrap()), damage, ram: other_data.ram_damage > 1.0, impulse});
                         }
+                    } else if boats.len() == 1
+                        && weapons.len() == 1
+                        && weapons[0].data().sub_kind == EntitySubKind::Torpedo
+                        && friendly
+                    {
+                        // PROBE for "torpedoes pass beneath enemy ships" bug.
+                        // Logs when a torpedo is geometrically + altitudinally
+                        // overlapping a boat but the friendly gate skips
+                        // damage. If this fires while the player is shooting
+                        // a visually-red bot, is_friendly is the culprit
+                        // (likely a match_team mis-assignment in
+                        // assign_match_teams / assign_late_joiners). REMOVE
+                        // after diagnosis.
+                        let weapon_player = weapons[0].borrow_player();
+                        let boat_player = boats[0].borrow_player();
+                        kodiak_server::log::warn!(
+                            "[probe-torpedo-friendly] torpedo from player={:?} \
+                             match_team={:?} skipped boat owner_player={:?} \
+                             match_team={:?}; same_team={}",
+                            weapon_player.player_id,
+                            weapon_player.match_team,
+                            boat_player.player_id,
+                            boat_player.match_team,
+                            weapon_player.match_team.is_some()
+                                && weapon_player.match_team == boat_player.match_team,
+                        );
                     } else if boats.len() == 1 && weapons.len() == 1 && !friendly {
                         let boat_data = boats[0].data();
                         let weapon_data = weapons[0].data();
